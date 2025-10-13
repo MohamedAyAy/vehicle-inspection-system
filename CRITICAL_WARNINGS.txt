@@ -1,0 +1,589 @@
+====================================================================================
+     CRITICAL WARNINGS & COMMON ERRORS - VEHICLE INSPECTION SYSTEM
+====================================================================================
+
+This document contains CRITICAL warnings about common errors and bugs that can
+occur in this system. READ CAREFULLY before deployment or testing.
+
+====================================================================================
+1. DATABASE CONNECTION ERRORS
+====================================================================================
+
+⚠️  CRITICAL: Database pool connection failures with asyncpg
+───────────────────────────────────────────────────────────
+SYMPTOM: "Failed to create database pool" or "Connection refused"
+
+ROOT CAUSES:
+- PostgreSQL service not running on Windows
+- Incorrect credentials in .env file
+- Database doesn't exist yet
+- Firewall blocking port 5432
+
+SOLUTIONS:
+✓ Ensure PostgreSQL is running: Open Windows Services, start "postgresql-x64-XX"
+✓ Create all databases BEFORE starting services:
+  CREATE DATABASE auth_db;
+  CREATE DATABASE appointments_db;
+  CREATE DATABASE payments_db;
+  CREATE DATABASE inspections_db;
+  CREATE DATABASE logs_db;
+✓ Verify .env has correct credentials:
+  DB_HOST=localhost
+  DB_USER=postgres
+  DB_PASSWORD=azerty5027
+✓ Test connection: psql -U postgres -h localhost
+
+PREVENTION:
+- Always check PostgreSQL status before starting services
+- Use init-databases.sql script to create all DBs at once
+- SQLAlchemy with pool_pre_ping=True helps detect dead connections
+
+====================================================================================
+2. JWT TOKEN ERRORS
+====================================================================================
+
+⚠️  CRITICAL: Token expiration and signature errors
+─────────────────────────────────────────────────
+SYMPTOM: "Token expired" or "Invalid token" even with valid credentials
+
+ROOT CAUSES:
+- PyJWT version mismatch (2.10.1 vs 2.8.0)
+- Mismatched JWT_SECRET_KEY across services
+- Token decoded as bytes instead of string in PyJWT 2.8.0+
+- Missing "Bearer " prefix handling
+
+SOLUTIONS:
+✓ Use PyJWT==2.8.0 (NOT 2.10.1, it doesn't exist!)
+✓ Ensure ALL services use same JWT_SECRET_KEY from .env
+✓ Handle "Bearer " prefix in token validation:
+  if token.startswith("Bearer "):
+      token = token[7:]
+✓ Set reasonable expiration: JWT_EXPIRATION_HOURS=24
+
+PREVENTION:
+- Load JWT_SECRET_KEY from environment, never hardcode
+- Always verify token format before decoding
+- Use try-except for jwt.ExpiredSignatureError and jwt.InvalidTokenError
+
+CODE EXAMPLE (CORRECT):
+def verify_token(token: str) -> dict:
+    try:
+        if token.startswith("Bearer "):
+            token = token[7:]
+        payload = jwt.decode(token, JWT_SECRET_KEY, algorithms=[JWT_ALGORITHM])
+        return payload
+    except jwt.ExpiredSignatureError:
+        raise HTTPException(status_code=401, detail="Token expired")
+    except jwt.InvalidTokenError:
+        raise HTTPException(status_code=401, detail="Invalid token")
+
+====================================================================================
+3. CORS ERRORS
+====================================================================================
+
+⚠️  CRITICAL: Cross-Origin Resource Sharing (CORS) blocking requests
+─────────────────────────────────────────────────────────────────────
+SYMPTOM: "CORS policy: No 'Access-Control-Allow-Origin' header"
+        Frontend can't call backend APIs
+
+ROOT CAUSES:
+- Missing CORS middleware in FastAPI
+- Incorrect origins configuration
+- Preflight OPTIONS requests not handled
+
+SOLUTIONS:
+✓ Add CORS middleware to EVERY service:
+  from fastapi.middleware.cors import CORSMiddleware
+  app.add_middleware(
+      CORSMiddleware,
+      allow_origins=["http://localhost:3000", "http://localhost:8001"],
+      allow_credentials=True,
+      allow_methods=["*"],
+      allow_headers=["*"],
+  )
+✓ Include ALL frontend and service URLs in allow_origins
+✓ Use allow_credentials=True for JWT cookies
+
+PREVENTION:
+- Always test API calls from browser console first
+- Check Network tab in browser DevTools for CORS errors
+- For development, can use allow_origins=["*"] (NOT for production!)
+
+====================================================================================
+4. SERVICE-TO-SERVICE COMMUNICATION ERRORS
+====================================================================================
+
+⚠️  CRITICAL: Services can't reach each other
+───────────────────────────────────────────────
+SYMPTOM: "Connection refused" when Appointment calls Payment
+        httpx.ConnectError or timeout errors
+
+ROOT CAUSES:
+- Using Docker service names (appointment-service:8002) on local Windows
+- Services not running on expected ports
+- Firewall blocking local connections
+- Wrong URL in .env file
+
+SOLUTIONS:
+✓ For LOCAL Windows development, use localhost:
+  PAYMENT_SERVICE_URL=http://localhost:8003
+  LOGGING_SERVICE_URL=http://localhost:8005
+  NOT http://payment-service:8003
+
+✓ Start services in correct order:
+  1. Logging Service (8005) FIRST!
+  2. Auth Service (8001)
+  3. Appointment Service (8002)
+  4. Payment Service (8003)
+  5. Inspection Service (8004)
+
+✓ Use httpx.AsyncClient with timeout:
+  async with httpx.AsyncClient(timeout=5) as client:
+      await client.post(url, json=data)
+
+PREVENTION:
+- Always start Logging Service first (other services log to it)
+- Use try-except for service communication and log failures
+- Implement health check endpoints to verify connectivity
+
+====================================================================================
+5. SQLALCHEMY SESSION ERRORS
+====================================================================================
+
+⚠️  CRITICAL: Session management and commit issues
+────────────────────────────────────────────────
+SYMPTOM: "Object is already attached to session"
+        "Transaction is already committed"
+        Data not saved to database
+
+ROOT CAUSES:
+- Forgetting to commit transactions
+- Not handling rollback on exceptions
+- Session not closed properly
+- Using expired objects after session closes
+
+SOLUTIONS:
+✓ Use dependency injection for session management:
+  async def get_db() -> AsyncGenerator[AsyncSession, None]:
+      async with async_session_maker() as session:
+          try:
+              yield session
+              await session.commit()
+          except Exception:
+              await session.rollback()
+              raise
+          finally:
+              await session.close()
+
+✓ Use db.flush() then db.refresh() to get auto-generated IDs:
+  db.add(new_object)
+  await db.flush()
+  await db.refresh(new_object)
+  # Now new_object.id is available
+
+✓ Don't use objects after session closes:
+  await db.refresh(obj)  # Load all attributes before returning
+
+PREVENTION:
+- Always use Depends(get_db) for database operations
+- Never pass SQLAlchemy objects between requests
+- Use expire_on_commit=False in sessionmaker if needed
+
+====================================================================================
+6. PASSWORD HASHING ERRORS
+====================================================================================
+
+⚠️  CRITICAL: bcrypt encoding issues
+──────────────────────────────────────
+SYMPTOM: "TypeError: Unicode-objects must be encoded before hashing"
+        Password verification always fails
+
+ROOT CAUSES:
+- Passing string to bcrypt instead of bytes
+- Comparing bytes to string
+- Wrong bcrypt rounds (too high = slow, too low = insecure)
+
+SOLUTIONS:
+✓ Correct hashing:
+  def hash_password(password: str) -> str:
+      salt = bcrypt.gensalt(rounds=12)
+      return bcrypt.hashpw(password.encode(), salt).decode()
+
+✓ Correct verification:
+  def verify_password(password: str, password_hash: str) -> bool:
+      return bcrypt.checkpw(password.encode(), password_hash.encode())
+
+PREVENTION:
+- ALWAYS encode() passwords before hashing
+- ALWAYS decode() hash to store as string in DB
+- Use rounds=12 (good balance of security and speed)
+- NEVER store plaintext passwords
+
+====================================================================================
+7. UUID CONVERSION ERRORS
+====================================================================================
+
+⚠️  CRITICAL: UUID string vs UUID object confusion
+────────────────────────────────────────────────────
+SYMPTOM: "Cannot convert string to UUID"
+        "UUID object is not JSON serializable"
+
+ROOT CAUSES:
+- Passing string UUID to database expecting UUID object
+- Returning UUID object in JSON response
+- Comparing string to UUID or vice versa
+
+SOLUTIONS:
+✓ Convert string to UUID for database:
+  uuid.UUID(user_id)
+
+✓ Convert UUID to string for JSON:
+  str(user.id)
+
+✓ SQLAlchemy models use:
+  from sqlalchemy.dialects.postgresql import UUID
+  id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+
+PREVENTION:
+- Use type hints: user_id: str vs user_id: uuid.UUID
+- Always convert UUID to string in Pydantic models
+- Use str() when creating response models
+
+====================================================================================
+8. JSON/JSONB SERIALIZATION ERRORS
+====================================================================================
+
+⚠️  CRITICAL: Storing and retrieving JSON data
+────────────────────────────────────────────────
+SYMPTOM: "Object of type datetime is not JSON serializable"
+        "dict object has no attribute vehicle_info"
+
+ROOT CAUSES:
+- Storing datetime objects in JSON fields
+- Not defining JSON column type correctly
+- Accessing dict keys as attributes
+
+SOLUTIONS:
+✓ Use JSON column in SQLAlchemy:
+  from sqlalchemy import JSON
+  vehicle_info: Mapped[dict] = mapped_column(JSON, nullable=False)
+
+✓ Convert datetime to ISO string before storing in JSON:
+  appointment_date=datetime.utcnow().isoformat()
+
+✓ Access JSON fields correctly:
+  vehicle_info["registration"]  # NOT vehicle_info.registration
+
+PREVENTION:
+- Use JSONB (not JSON) in PostgreSQL for better performance
+- Validate JSON structure with Pydantic models
+- Always convert dates to ISO strings in JSON
+
+====================================================================================
+9. IDEMPOTENCY KEY ERRORS
+====================================================================================
+
+⚠️  CRITICAL: Duplicate appointment creation
+──────────────────────────────────────────────
+SYMPTOM: User clicks "Create" twice, gets 2 appointments
+        Prevents accidental duplicates
+
+ROOT CAUSES:
+- Not using idempotency keys
+- Not checking for existing requests
+- Unique constraint not set on idempotency_key
+
+SOLUTIONS:
+✓ Accept idempotency key in header:
+  idempotency_key: Optional[str] = Header(None)
+
+✓ Check for existing request:
+  if idempotency_key:
+      existing = await db.execute(
+          select(Appointment).where(Appointment.idempotency_key == idempotency_key)
+      )
+      if existing:
+          return existing  # Return cached result
+
+✓ Add unique constraint:
+  idempotency_key: Mapped[Optional[str]] = mapped_column(String(255), nullable=True, unique=True)
+
+PREVENTION:
+- Generate idempotency keys on frontend: uuid.v4()
+- Store idempotency keys with partial unique index
+- Return same result for duplicate requests
+
+====================================================================================
+10. ASYNC/AWAIT ERRORS
+====================================================================================
+
+⚠️  CRITICAL: Forgetting async/await keywords
+───────────────────────────────────────────────
+SYMPTOM: "RuntimeWarning: coroutine was never awaited"
+        Functions return coroutine objects instead of results
+
+ROOT CAUSES:
+- Calling async function without await
+- Using async function in sync context
+- Not marking function as async
+
+SOLUTIONS:
+✓ Always await async calls:
+  result = await db.execute(query)  # NOT result = db.execute(query)
+
+✓ Mark database functions as async:
+  async def get_user(db: AsyncSession):
+      return await db.execute(...)
+
+✓ Use async with for context managers:
+  async with httpx.AsyncClient() as client:
+      await client.post(url)
+
+PREVENTION:
+- IDE warnings about unawaited coroutines
+- Use type hints: async def func() -> ReturnType:
+- Test all async operations
+
+====================================================================================
+11. LOGGING SERVICE FAILURES
+====================================================================================
+
+⚠️  CRITICAL: Logging service down or unreachable
+───────────────────────────────────────────────────
+SYMPTOM: Services crash when logging fails
+        Timeout waiting for logging response
+
+ROOT CAUSES:
+- Logging service not started first
+- Blocking log calls making services slow
+- No timeout on log requests
+- No error handling for failed logs
+
+SOLUTIONS:
+✓ Make logging non-blocking:
+  async def log_event(service: str, event: str, level: str, message: str):
+      try:
+          async with httpx.AsyncClient(timeout=5) as client:
+              await client.post(f"{LOGGING_SERVICE_URL}/log", json={...})
+      except Exception as e:
+          logger.warning(f"Failed to log event: {e}")  # Don't crash!
+
+✓ Start Logging Service FIRST before other services
+
+✓ Use short timeout (5 seconds max)
+
+PREVENTION:
+- Logging failures should NEVER crash main service
+- Always use try-except for log calls
+- Consider fire-and-forget pattern for logs
+
+====================================================================================
+12. ENVIRONMENT VARIABLE ERRORS
+====================================================================================
+
+⚠️  CRITICAL: Missing or incorrect .env configuration
+───────────────────────────────────────────────────────
+SYMPTOM: Services use default hardcoded values
+        Different services use different configurations
+
+ROOT CAUSES:
+- .env file not in correct location
+- .env not loaded with python-dotenv
+- Environment variables not set in PowerShell
+
+SOLUTIONS:
+✓ Place .env at project root:
+  vehicle-inspection-system/.env
+
+✓ Load in every service main.py:
+  from dotenv import load_dotenv
+  load_dotenv()  # Call before accessing os.getenv()
+
+✓ Use getenv with defaults:
+  DB_PASSWORD = os.getenv("DB_PASSWORD", "default_password")
+
+PREVENTION:
+- Check .env is loaded: print(os.getenv("DB_PASSWORD"))
+- Don't commit .env to git (use .env.example)
+- Document all required environment variables
+
+====================================================================================
+13. APPOINTMENT-PAYMENT FLOW ERRORS
+====================================================================================
+
+⚠️  CRITICAL: Appointment status not updated after payment
+────────────────────────────────────────────────────────────
+SYMPTOM: User pays but appointment still shows "pending"
+        No link between payment and appointment
+
+ROOT CAUSES:
+- Payment Service doesn't callback Appointment Service
+- Appointment Service doesn't update status
+- Missing payment_id in appointment record
+
+SOLUTIONS:
+✓ Payment Service confirms appointment:
+  async with httpx.AsyncClient() as client:
+      await client.put(
+          f"{APPOINTMENT_SERVICE_URL}/appointments/{appointment_id}/confirm",
+          json={"payment_id": str(payment.id), "status": "confirmed"}
+      )
+
+✓ Appointment Service updates record:
+  appointment.status = "confirmed"
+  appointment.payment_id = uuid.UUID(payment_id)
+  await db.flush()
+
+✓ Store bidirectional references:
+  - appointments table has payment_id
+  - payments table has appointment_id
+
+PREVENTION:
+- Always update appointment after payment confirmation
+- Log all status changes for debugging
+- Use database transactions to ensure atomicity
+
+====================================================================================
+14. TECHNICIAN ROLE VALIDATION ERRORS
+====================================================================================
+
+⚠️  CRITICAL: Non-technicians submitting inspection results
+─────────────────────────────────────────────────────────────
+SYMPTOM: Customers can access technician-only endpoints
+        No role-based access control
+
+ROOT CAUSES:
+- Not validating user role from JWT token
+- Missing role checks in endpoints
+- Anyone with valid token can access any endpoint
+
+SOLUTIONS:
+✓ Extract and verify role from token:
+  def verify_token(token: str) -> dict:
+      payload = jwt.decode(token, JWT_SECRET_KEY, algorithms=[JWT_ALGORITHM])
+      return payload  # Contains "role" field
+
+✓ Check role in protected endpoints:
+  user = verify_token(authorization)
+  if user["role"] != "technician":
+      raise HTTPException(status_code=403, detail="Technician access required")
+
+✓ Create role checking decorator/dependency:
+  def require_role(required_role: str):
+      def check_role(authorization: str = Header(...)):
+          user = verify_token(authorization)
+          if user["role"] != required_role:
+              raise HTTPException(status_code=403)
+          return user
+      return check_role
+
+PREVENTION:
+- Validate roles on ALL protected endpoints
+- Use "admin" for logging access, "technician" for inspections
+- Never trust client-side role claims
+
+====================================================================================
+15. PORT CONFLICTS AND CLEANUP
+====================================================================================
+
+⚠️  CRITICAL: Port already in use
+───────────────────────────────────
+SYMPTOM: "Address already in use" when starting service
+        uvicorn can't bind to port
+
+ROOT CAUSES:
+- Service already running from previous session
+- Another app using the port
+- Crashed service didn't release port
+
+SOLUTIONS:
+✓ Find process using port (Windows):
+  netstat -ano | findstr :8001
+
+✓ Kill process by PID:
+  taskkill /PID <PID> /F
+
+✓ Or use port checking in script:
+  Test-NetConnection localhost -Port 8001
+
+PREVENTION:
+- Use Ctrl+C to stop services cleanly
+- Create startup script that checks/kills old processes
+- Use different port ranges for dev/prod
+
+====================================================================================
+16. DATETIME TIMEZONE ISSUES
+====================================================================================
+
+⚠️  CRITICAL: Inconsistent datetime handling
+──────────────────────────────────────────────
+SYMPTOM: Appointment times off by hours
+        Created_at timestamps don't match
+
+ROOT CAUSES:
+- Mixing timezone-aware and naive datetimes
+- Using datetime.now() instead of datetime.utcnow()
+- PostgreSQL storing with/without timezone
+
+SOLUTIONS:
+✓ Always use UTC:
+  created_at = datetime.utcnow()
+
+✓ SQLAlchemy DateTime column:
+  created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+✓ Convert to ISO format for JSON:
+  created_at.isoformat()
+
+✓ Parse ISO strings:
+  datetime.fromisoformat(date_string)
+
+PREVENTION:
+- Use UTC everywhere, convert to local only in frontend
+- PostgreSQL: Use TIMESTAMP WITHOUT TIME ZONE
+- Never use datetime.now() in backend
+
+====================================================================================
+FINAL RECOMMENDATIONS
+====================================================================================
+
+1. ✓ READ ERROR LOGS CAREFULLY - Most issues are clearly described in stack traces
+
+2. ✓ TEST EACH SERVICE INDEPENDENTLY - Use /docs endpoint to test before integration
+
+3. ✓ START SERVICES IN ORDER - Logging first, then Auth, then others
+
+4. ✓ USE POSTGRESQL ADMIN TOOLS - pgAdmin or DBeaver to inspect database state
+
+5. ✓ ENABLE DEBUG LOGGING - Set logging.basicConfig(level=logging.DEBUG) when debugging
+
+6. ✓ USE BROWSER DEVTOOLS - Network tab shows exact errors in API calls
+
+7. ✓ KEEP SERVICES UPDATED - pip list to check installed versions
+
+8. ✓ BACKUP YOUR DATABASE - Before making schema changes
+
+9. ✓ USE GIT - Commit working states so you can rollback
+
+10. ✓ READ FASTAPI DOCS - https://fastapi.tiangolo.com/
+
+====================================================================================
+EMERGENCY DEBUGGING CHECKLIST
+====================================================================================
+
+If something breaks:
+□ Check all services are running (5 PowerShell windows)
+□ Check PostgreSQL is running (Windows Services)
+□ Check .env file exists and has correct values
+□ Check all databases exist (psql -l)
+□ Check for port conflicts (netstat -ano | findstr :800)
+□ Check error logs in each PowerShell window
+□ Check API docs endpoint works (/docs)
+□ Check health endpoint works (/health)
+□ Restart services in correct order
+□ Clear Python cache: del __pycache__, .pyc files
+□ Reinstall requirements if needed
+
+====================================================================================
+END OF CRITICAL WARNINGS
+====================================================================================
