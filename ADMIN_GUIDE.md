@@ -248,5 +248,6 @@ curl -X POST "http://localhost:8001/login" \
 3. Access admin dashboard
 4. Manage the entire system!
 
-**Admin Dashboard:** http://localhost:3000/admin-dashboard.html
+**Admin Dashboard:** http://localhost:3000/admcd /home/aliaqil/Desktop/projects/vehicle-inspection-system
+docker-compose up -d --buildin-dashboard.html
 **API Docs:** http://localhost:8001/docs
