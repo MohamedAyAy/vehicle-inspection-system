@@ -6,6 +6,7 @@ Database: inspections_db
 
 from fastapi import FastAPI, HTTPException, Header, Depends
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, validator
 import jwt
 import os
@@ -707,6 +708,228 @@ async def get_inspection_stats_admin(
     except Exception as e:
         logger.error(f"Admin get stats error: {e}")
         raise HTTPException(status_code=500, detail="Failed to retrieve statistics")
+
+@app.get("/inspections/certificate/{appointment_id}")
+async def generate_inspection_certificate(
+    appointment_id: str,
+    authorization: str = Header(...),
+    db: AsyncSession = Depends(get_db)
+):
+    """Generate PDF certificate for inspection"""
+    try:
+        user = verify_token(authorization)
+        
+        # Get inspection by appointment ID
+        result = await db.execute(
+            select(Inspection).where(Inspection.appointment_id == uuid.UUID(appointment_id))
+        )
+        inspection = result.scalar_one_or_none()
+        
+        if not inspection:
+            raise HTTPException(status_code=404, detail="Inspection not found")
+        
+        # Fetch appointment details to get vehicle info
+        async with httpx.AsyncClient() as client:
+            apt_response = await client.get(
+                f"http://localhost:8002/appointments/details/{appointment_id}",
+                headers={"Authorization": authorization}
+            )
+            
+            if apt_response.status_code != 200:
+                raise HTTPException(status_code=404, detail="Appointment not found")
+            
+            appointment = apt_response.json()
+        
+        # Generate PDF content (simple text-based PDF using reportlab)
+        try:
+            from reportlab.lib.pagesizes import letter, A4
+            from reportlab.lib import colors
+            from reportlab.lib.units import inch
+            from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer
+            from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+            from reportlab.lib.enums import TA_CENTER, TA_LEFT
+            from io import BytesIO
+            
+            # Create PDF in memory
+            buffer = BytesIO()
+            doc = SimpleDocTemplate(buffer, pagesize=A4)
+            elements = []
+            styles = getSampleStyleSheet()
+            
+            # Title
+            title_style = ParagraphStyle(
+                'CustomTitle',
+                parent=styles['Heading1'],
+                fontSize=24,
+                textColor=colors.HexColor('#1abc9c'),
+                spaceAfter=30,
+                alignment=TA_CENTER
+            )
+            elements.append(Paragraph("VEHICLE INSPECTION CERTIFICATE", title_style))
+            elements.append(Spacer(1, 0.3*inch))
+            
+            # Status banner
+            status_text = inspection.final_status.replace('_', ' ').upper()
+            status_color = {
+                'passed': colors.HexColor('#4caf50'),
+                'failed': colors.HexColor('#f44336'),
+                'passed_with_minor_issues': colors.HexColor('#ff9800'),
+                'in_progress': colors.HexColor('#ffa500'),
+                'not_checked': colors.HexColor('#999999')
+            }.get(inspection.final_status, colors.grey)
+            
+            status_style = ParagraphStyle(
+                'Status',
+                parent=styles['Normal'],
+                fontSize=18,
+                textColor=colors.white,
+                backColor=status_color,
+                alignment=TA_CENTER,
+                spaceAfter=20
+            )
+            elements.append(Paragraph(f"<b>STATUS: {status_text}</b>", status_style))
+            elements.append(Spacer(1, 0.3*inch))
+            
+            # Vehicle Information
+            vehicle_info = appointment.get('vehicle_info', {})
+            info_data = [
+                ['Vehicle Information', ''],
+                ['Registration Number:', vehicle_info.get('registration', 'N/A')],
+                ['Brand:', vehicle_info.get('brand', 'N/A')],
+                ['Model:', vehicle_info.get('model', 'N/A')],
+                ['Type:', vehicle_info.get('type', 'N/A')],
+                ['Year:', str(vehicle_info.get('year', 'N/A'))],
+                ['', ''],
+                ['Inspection Details', ''],
+                ['Inspection ID:', str(inspection.id)[:8] + '...'],
+                ['Appointment ID:', str(inspection.appointment_id)[:8] + '...'],
+                ['Inspection Date:', inspection.created_at.strftime('%Y-%m-%d %H:%M')],
+            ]
+            
+            info_table = Table(info_data, colWidths=[2.5*inch, 3*inch])
+            info_table.setStyle(TableStyle([
+                ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#1abc9c')),
+                ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
+                ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
+                ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                ('FONTSIZE', (0, 0), (-1, 0), 12),
+                ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
+                ('BACKGROUND', (0, 7), (-1, 7), colors.HexColor('#1abc9c')),
+                ('TEXTCOLOR', (0, 7), (-1, 7), colors.white),
+                ('FONTNAME', (0, 7), (-1, 7), 'Helvetica-Bold'),
+                ('GRID', (0, 0), (-1, -1), 1, colors.grey),
+                ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+                ('LEFTPADDING', (0, 0), (-1, -1), 8),
+                ('RIGHTPADDING', (0, 0), (-1, -1), 8),
+            ]))
+            elements.append(info_table)
+            elements.append(Spacer(1, 0.3*inch))
+            
+            # Inspection Items
+            results = inspection.results or {}
+            items_data = [['Inspection Item', 'Result']]
+            for key, value in results.items():
+                items_data.append([key.replace('_', ' ').title(), str(value).upper()])
+            
+            items_table = Table(items_data, colWidths=[3*inch, 2.5*inch])
+            items_table.setStyle(TableStyle([
+                ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#1abc9c')),
+                ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
+                ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
+                ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                ('FONTSIZE', (0, 0), (-1, 0), 12),
+                ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
+                ('GRID', (0, 0), (-1, -1), 1, colors.grey),
+                ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+                ('LEFTPADDING', (0, 0), (-1, -1), 8),
+                ('RIGHTPADDING', (0, 0), (-1, -1), 8),
+            ]))
+            elements.append(items_table)
+            elements.append(Spacer(1, 0.3*inch))
+            
+            # Notes
+            if inspection.notes:
+                notes_style = ParagraphStyle(
+                    'Notes',
+                    parent=styles['Normal'],
+                    fontSize=10,
+                    spaceAfter=12
+                )
+                elements.append(Paragraph("<b>Inspector Notes:</b>", styles['Heading3']))
+                elements.append(Paragraph(inspection.notes, notes_style))
+                elements.append(Spacer(1, 0.2*inch))
+            
+            # Footer
+            footer_text = f"This certificate was generated on {datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')} UTC"
+            footer_style = ParagraphStyle(
+                'Footer',
+                parent=styles['Normal'],
+                fontSize=8,
+                textColor=colors.grey,
+                alignment=TA_CENTER
+            )
+            elements.append(Spacer(1, 0.5*inch))
+            elements.append(Paragraph(footer_text, footer_style))
+            
+            # Build PDF
+            doc.build(elements)
+            buffer.seek(0)
+            
+            return StreamingResponse(
+                buffer,
+                media_type="application/pdf",
+                headers={"Content-Disposition": f"attachment; filename=inspection_certificate_{appointment_id}.pdf"}
+            )
+            
+        except ImportError:
+            # Fallback: Generate simple text-based response if reportlab not available
+            logger.warning("reportlab not installed, generating simple text certificate")
+            
+            text_content = f"""
+VEHICLE INSPECTION CERTIFICATE
+==============================
+
+STATUS: {inspection.final_status.replace('_', ' ').upper()}
+
+VEHICLE INFORMATION
+-------------------
+Registration: {vehicle_info.get('registration', 'N/A')}
+Brand: {vehicle_info.get('brand', 'N/A')}
+Model: {vehicle_info.get('model', 'N/A')}
+Type: {vehicle_info.get('type', 'N/A')}
+Year: {vehicle_info.get('year', 'N/A')}
+
+INSPECTION DETAILS
+------------------
+Inspection ID: {inspection.id}
+Appointment ID: {inspection.appointment_id}
+Inspection Date: {inspection.created_at.strftime('%Y-%m-%d %H:%M')}
+
+INSPECTION ITEMS
+----------------
+{chr(10).join([f"{k.replace('_', ' ').title()}: {v}" for k, v in (inspection.results or {}).items()])}
+
+NOTES
+-----
+{inspection.notes or 'No notes provided'}
+
+Generated: {datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')} UTC
+"""
+            
+            from io import BytesIO
+            buffer = BytesIO(text_content.encode('utf-8'))
+            
+            return StreamingResponse(
+                buffer,
+                media_type="text/plain",
+                headers={"Content-Disposition": f"attachment; filename=inspection_certificate_{appointment_id}.txt"}
+            )
+            
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"PDF generation error: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to generate certificate: {str(e)}")
 
 if __name__ == "__main__":
     import uvicorn

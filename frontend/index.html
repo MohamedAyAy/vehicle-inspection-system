@@ -1163,7 +1163,16 @@
                 const data = await response.json();
 
                 if (!response.ok) {
-                    showAlert(alert, data.detail || 'Registration failed', 'error');
+                    // Better error handling
+                    let errorMsg = 'Registration failed';
+                    if (typeof data.detail === 'string') {
+                        errorMsg = data.detail;
+                    } else if (data.detail && typeof data.detail === 'object') {
+                        errorMsg = JSON.stringify(data.detail);
+                    } else if (data.message) {
+                        errorMsg = data.message;
+                    }
+                    showAlert(alert, errorMsg, 'error');
                     return;
                 }
 
