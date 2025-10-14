@@ -1044,6 +1044,20 @@
                 </div>
             </div>
         </div>
+
+        <!-- Inspection Details Modal (NEW FEATURE!) -->
+        <div id="inspectionDetailsModal" class="modal">
+            <div class="modal-content" style="max-width: 800px;">
+                <span class="close" onclick="closeInspectionDetails()">&times;</span>
+                <h2>🔍 Inspection Details</h2>
+                <div id="inspectionDetailsContent" style="max-height: 500px; overflow-y: auto;">
+                    <p style="text-align: center; color: #666;">Loading...</p>
+                </div>
+                <div style="margin-top: 20px; text-align: center;">
+                    <button id="downloadPdfBtn" onclick="downloadCurrentInspectionPDF()" style="background: #ff6b6b;">📄 Download PDF Report</button>
+                </div>
+            </div>
+        </div>
     </div>
 
     <script>
@@ -1678,8 +1692,17 @@
             }
         }
 
-        async function viewInspectionDetails(inspectionId) {
+        let currentInspectionAppointmentId = null;
+
+        async function viewInspectionDetails(inspectionId, appointmentId = null) {
+            const modal = document.getElementById('inspectionDetailsModal');
+            const content = document.getElementById('inspectionDetailsContent');
+            
+            modal.style.display = 'block';
+            content.innerHTML = '<p style="text-align: center; color: #666;">Loading inspection details...</p>';
+            
             try {
+                // Fetch inspection details
                 const response = await fetch(
                     `${SERVICES.inspection}/inspections/${inspectionId}`,
                     { headers: { 'Authorization': `Bearer ${currentToken}` } }
@@ -1690,30 +1713,142 @@
                 }
                 
                 const inspection = await response.json();
+                currentInspectionAppointmentId = inspection.appointment_id;
                 
-                // Show in a modal or alert
+                // Fetch files for this appointment
+                let files = [];
+                try {
+                    const filesResponse = await fetch(
+                        `${SERVICES.file}/files/appointment/${inspection.appointment_id}`,
+                        { headers: { 'Authorization': `Bearer ${currentToken}` } }
+                    );
+                    if (filesResponse.ok) {
+                        files = await filesResponse.json();
+                    }
+                } catch (err) {
+                    console.log('Could not load files:', err);
+                }
+                
                 const results = inspection.results || {};
-                const notes = inspection.notes || 'No notes';
+                const notes = inspection.notes || 'No notes provided';
                 
-                const detailsHTML = `
-                    <h3>Inspection Details</h3>
-                    <p><strong>Final Status:</strong> ${inspection.final_status.replace(/_/g, ' ').toUpperCase()}</p>
-                    <h4>Item Results:</h4>
-                    <ul>
-                        ${Object.entries(results).map(([key, value]) => 
-                            `<li><strong>${key}:</strong> ${value}</li>`
-                        ).join('')}
-                    </ul>
-                    <h4>Notes:</h4>
-                    <p>${notes}</p>
-                    <p><small>Inspected at: ${new Date(inspection.created_at).toLocaleString()}</small></p>
+                // Status mapping with colors and emojis
+                const statusMap = {
+                    'not_checked': { text: 'Not Checked', emoji: '⏳', color: '#999' },
+                    'in_progress': { text: 'In Progress', emoji: '🔄', color: '#ffa500' },
+                    'passed': { text: 'PASSED', emoji: '✅', color: '#4caf50' },
+                    'failed': { text: 'FAILED', emoji: '❌', color: '#f44336' },
+                    'passed_with_minor_issues': { text: 'Passed with Minor Issues', emoji: '⚠️', color: '#ff9800' }
+                };
+                
+                const status = statusMap[inspection.final_status] || { text: inspection.final_status, emoji: '', color: '#666' };
+                
+                // Build detailed HTML
+                let detailsHTML = `
+                    <div style="padding: 20px;">
+                        <!-- Final Status -->
+                        <div style="text-align: center; padding: 20px; background: ${status.color}; color: white; border-radius: 8px; margin-bottom: 20px;">
+                            <h2 style="margin: 0; color: white;">${status.emoji} ${status.text}</h2>
+                        </div>
+                        
+                        <!-- Inspection Info -->
+                        <div style="background: #f8f9fa; padding: 15px; border-radius: 5px; margin-bottom: 20px;">
+                            <p style="margin: 5px 0;"><strong>Inspection ID:</strong> ${inspection.id}</p>
+                            <p style="margin: 5px 0;"><strong>Appointment ID:</strong> ${inspection.appointment_id}</p>
+                            <p style="margin: 5px 0;"><strong>Inspected At:</strong> ${new Date(inspection.created_at).toLocaleString()}</p>
+                        </div>
+                        
+                        <!-- Item Results -->
+                        <div style="margin-bottom: 20px;">
+                            <h3 style="border-bottom: 2px solid #1abc9c; padding-bottom: 10px;">📋 Inspection Items</h3>
+                            <table style="width: 100%; border-collapse: collapse;">
+                                <thead>
+                                    <tr style="background: #f8f9fa;">
+                                        <th style="padding: 10px; text-align: left; border: 1px solid #ddd;">Item</th>
+                                        <th style="padding: 10px; text-align: center; border: 1px solid #ddd;">Result</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    ${Object.entries(results).length > 0 ? 
+                                        Object.entries(results).map(([key, value]) => {
+                                            const isPassed = value && (value.toString().toLowerCase() === 'pass' || value.toString().toLowerCase() === 'passed' || value.toString().toLowerCase() === 'yes');
+                                            const isFailed = value && (value.toString().toLowerCase() === 'fail' || value.toString().toLowerCase() === 'failed' || value.toString().toLowerCase() === 'no');
+                                            const bgColor = isPassed ? '#e8f5e9' : isFailed ? '#ffebee' : '#fff';
+                                            const icon = isPassed ? '✅' : isFailed ? '❌' : '⚪';
+                                            
+                                            return `
+                                                <tr style="background: ${bgColor};">
+                                                    <td style="padding: 10px; border: 1px solid #ddd; text-transform: capitalize;"><strong>${key.replace(/_/g, ' ')}</strong></td>
+                                                    <td style="padding: 10px; border: 1px solid #ddd; text-align: center;">${icon} ${value}</td>
+                                                </tr>
+                                            `;
+                                        }).join('')
+                                        : '<tr><td colspan="2" style="padding: 20px; text-align: center; color: #999;">No inspection items recorded</td></tr>'
+                                    }
+                                </tbody>
+                            </table>
+                        </div>
+                        
+                        <!-- Notes -->
+                        <div style="margin-bottom: 20px;">
+                            <h3 style="border-bottom: 2px solid #1abc9c; padding-bottom: 10px;">📝 Inspector Notes</h3>
+                            <div style="background: #fffbf0; padding: 15px; border-left: 4px solid #ffa500; border-radius: 4px;">
+                                ${notes}
+                            </div>
+                        </div>
+                        
+                        <!-- Photos -->
+                        ${files.length > 0 ? `
+                            <div>
+                                <h3 style="border-bottom: 2px solid #1abc9c; padding-bottom: 10px;">📷 Inspection Photos (${files.length})</h3>
+                                <div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px;">
+                                    ${files.map(file => `
+                                        <div style="position: relative; border: 2px solid #ddd; border-radius: 5px; overflow: hidden; cursor: pointer;" onclick="window.open('${SERVICES.file}/files/${file.id}/download', '_blank')">
+                                            <img src="${SERVICES.file}/files/${file.id}/download" 
+                                                 style="width: 100%; height: 150px; object-fit: cover;"
+                                                 onerror="this.src='data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 width=%22150%22 height=%22150%22%3E%3Crect fill=%22%23ddd%22 width=%22150%22 height=%22150%22/%3E%3Ctext x=%2250%25%22 y=%2250%25%22 fill=%22%23999%22 text-anchor=%22middle%22 dy=%22.3em%22%3EImage%3C/text%3E%3C/svg%3E'">
+                                            <div style="position: absolute; bottom: 0; left: 0; right: 0; background: rgba(0,0,0,0.7); color: white; padding: 5px; font-size: 11px; text-align: center;">
+                                                Click to view
+                                            </div>
+                                        </div>
+                                    `).join('')}
+                                </div>
+                            </div>
+                        ` : '<p style="color: #999; text-align: center; padding: 20px;">No photos uploaded for this inspection</p>'}
+                    </div>
                 `;
                 
-                // For now, use alert. Later we can create a proper modal
-                alert(detailsHTML.replace(/<[^>]*>/g, '\n').replace(/\n\n+/g, '\n'));
+                content.innerHTML = detailsHTML;
                 
             } catch (error) {
-                alert('Error loading inspection details: ' + error.message);
+                console.error('Error loading inspection details:', error);
+                content.innerHTML = `<p style="color: red; text-align: center;">Error loading inspection details: ${error.message}</p>`;
+            }
+        }
+
+        function closeInspectionDetails() {
+            document.getElementById('inspectionDetailsModal').style.display = 'none';
+            currentInspectionAppointmentId = null;
+        }
+
+        // Close modals when clicking outside
+        window.onclick = function(event) {
+            const inspModal = document.getElementById('inspectionDetailsModal');
+            const notifModal = document.getElementById('notificationsModal');
+            
+            if (event.target == inspModal) {
+                closeInspectionDetails();
+            }
+            if (event.target == notifModal) {
+                closeNotifications();
+            }
+        }
+
+        function downloadCurrentInspectionPDF() {
+            if (currentInspectionAppointmentId) {
+                downloadInspectionPDF(currentInspectionAppointmentId);
+            } else {
+                alert('No inspection selected');
             }
         }
 
@@ -1785,18 +1920,55 @@
                     
                     showAlert(alert, 'Inspection submitted successfully!', 'success');
                     
-                    // Send notification (NEW FEATURE!)
-                    const statusEmoji = {
-                        'passed': '✅',
-                        'failed': '❌',
-                        'in_progress': '⏳',
-                        'passed_with_minor_issues': '⚠️'
-                    };
-                    await sendNotification(
-                        `${statusEmoji[data.final_status] || '📋'} Inspection ${data.final_status === 'in_progress' ? 'In Progress' : 'Complete'}`,
-                        `Your vehicle inspection ${data.final_status === 'in_progress' ? 'is in progress' : 'has been completed'}. Status: ${data.final_status.replace(/_/g, ' ').toUpperCase()}`,
-                        'inspection'
-                    );
+                    // Send notification to VEHICLE OWNER (customer), not technician! (FIXED!)
+                    try {
+                        // Fetch appointment to get customer details
+                        const aptResponse = await fetch(
+                            `${SERVICES.appointment}/appointments/details/${data.appointment_id}`,
+                            { headers: { 'Authorization': `Bearer ${currentToken}` } }
+                        );
+                        
+                        if (aptResponse.ok) {
+                            const appointment = await aptResponse.json();
+                            const vehicleOwner = appointment.user_id; // Customer who owns the vehicle
+                            
+                            // Get customer email from appointment
+                            const userResponse = await fetch(
+                                `${SERVICES.auth}/users/${vehicleOwner}`,
+                                { headers: { 'Authorization': `Bearer ${currentToken}` } }
+                            );
+                            
+                            if (userResponse.ok) {
+                                const customerInfo = await userResponse.json();
+                                
+                                // Send notification to CUSTOMER ONLY
+                                const statusEmoji = {
+                                    'passed': '✅',
+                                    'failed': '❌',
+                                    'in_progress': '⏳',
+                                    'passed_with_minor_issues': '⚠️'
+                                };
+                                
+                                await fetch(`${SERVICES.notification}/notifications/send`, {
+                                    method: 'POST',
+                                    headers: {
+                                        'Content-Type': 'application/json',
+                                        'Authorization': `Bearer ${currentToken}`
+                                    },
+                                    body: JSON.stringify({
+                                        user_id: vehicleOwner,
+                                        user_email: customerInfo.email,
+                                        notification_type: 'email',
+                                        channel: 'inspection',
+                                        subject: `${statusEmoji[data.final_status] || '📋'} Inspection ${data.final_status === 'in_progress' ? 'In Progress' : 'Complete'}`,
+                                        message: `Your vehicle inspection (${appointment.vehicle_info.brand} ${appointment.vehicle_info.model} - ${appointment.vehicle_info.registration}) ${data.final_status === 'in_progress' ? 'is in progress' : 'has been completed'}. Status: ${data.final_status.replace(/_/g, ' ').toUpperCase()}`
+                                    })
+                                });
+                            }
+                        }
+                    } catch (notifError) {
+                        console.log('Could not send notification:', notifError);
+                    }
                     
                     event.target.reset();
                     selectedFiles = [];
@@ -2180,7 +2352,7 @@
             
             try {
                 // Fetch all inspections
-                const response = await fetch(`${SERVICES.inspection}/inspections/all`, {
+                const response = await fetch(`${SERVICES.inspection}/admin/inspections/all`, {
                     headers: { 'Authorization': `Bearer ${currentToken}` }
                 });
                 
@@ -2188,7 +2360,8 @@
                     throw new Error('Failed to load inspections');
                 }
                 
-                const inspections = await response.json();
+                const data = await response.json();
+                const inspections = data.inspections || [];
                 
                 if (inspections.length === 0) {
                     container.innerHTML = '<p>No inspections found yet.</p>';
@@ -2254,42 +2427,8 @@
         }
         
         async function viewAdminInspectionDetails(inspectionId) {
-            try {
-                const response = await fetch(
-                    `${SERVICES.inspection}/inspections/${inspectionId}`,
-                    { headers: { 'Authorization': `Bearer ${currentToken}` } }
-                );
-                
-                if (!response.ok) {
-                    throw new Error('Failed to load inspection details');
-                }
-                
-                const inspection = await response.json();
-                const results = inspection.results || {};
-                const notes = inspection.notes || 'No notes';
-                
-                const detailsText = `
-INSPECTION DETAILS
-==================
-
-Inspection ID: ${inspection.id}
-Appointment ID: ${inspection.appointment_id}
-Final Status: ${inspection.final_status.replace(/_/g, ' ').toUpperCase()}
-
-ITEM RESULTS:
-${Object.entries(results).map(([key, value]) => `  • ${key}: ${value}`).join('\n')}
-
-NOTES:
-${notes}
-
-Inspected at: ${new Date(inspection.created_at).toLocaleString()}
-                `;
-                
-                alert(detailsText);
-                
-            } catch (error) {
-                alert('Error loading inspection details: ' + error.message);
-            }
+            // Use the same modal as customer/technician view
+            await viewInspectionDetails(inspectionId);
         }
         
         async function loadAdminSchedule() {
@@ -2687,8 +2826,8 @@ Inspected at: ${new Date(inspection.created_at).toLocaleString()}
                                         <td><span class="badge ${v.status}">${v.status_display}</span></td>
                                         <td>
                                             ${v.status === 'not_checked' || v.status === 'in_progress' ? 
-                                                `<button onclick="startInspection('${v.appointment_id}')">Inspect</button>` : 
-                                                `<button disabled>Completed</button>`
+                                                `<button onclick="startInspection('${v.appointment_id}')">🔧 Inspect</button>` : 
+                                                `<button onclick="viewInspectionByAppointment('${v.appointment_id}')" style="background: #4caf50;">👁️ View</button>`
                                             }
                                         </td>
                                     </tr>
@@ -2707,6 +2846,25 @@ Inspected at: ${new Date(inspection.created_at).toLocaleString()}
         function startInspection(appointmentId) {
             document.getElementById('inspectionAppId').value = appointmentId;
             navigateTo('inspection');
+        }
+
+        async function viewInspectionByAppointment(appointmentId) {
+            try {
+                // Fetch inspection by appointment ID
+                const response = await fetch(
+                    `${SERVICES.inspection}/inspections/appointment/${appointmentId}`,
+                    { headers: { 'Authorization': `Bearer ${currentToken}` } }
+                );
+                
+                if (response.ok) {
+                    const inspection = await response.json();
+                    await viewInspectionDetails(inspection.id, appointmentId);
+                } else {
+                    alert('Could not find inspection for this appointment');
+                }
+            } catch (error) {
+                alert('Error loading inspection: ' + error.message);
+            }
         }
 
         // ============= PAYMENT =============

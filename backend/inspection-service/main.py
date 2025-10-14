@@ -541,6 +541,76 @@ async def get_inspection_result(
         logger.error(f"Get inspection result error: {e}")
         raise HTTPException(status_code=500, detail="Failed to retrieve inspection result")
 
+@app.get("/inspections/{inspection_id}")
+async def get_inspection_by_id(
+    inspection_id: str,
+    authorization: str = Header(...),
+    db: AsyncSession = Depends(get_db)
+):
+    """Get single inspection by ID with full details"""
+    try:
+        user = verify_token(authorization)
+        
+        result = await db.execute(
+            select(Inspection).where(Inspection.id == uuid.UUID(inspection_id))
+        )
+        inspection = result.scalar_one_or_none()
+        
+        if not inspection:
+            raise HTTPException(status_code=404, detail="Inspection not found")
+        
+        return {
+            "id": str(inspection.id),
+            "appointment_id": str(inspection.appointment_id),
+            "technician_id": str(inspection.technician_id),
+            "results": inspection.results or {},
+            "final_status": inspection.final_status,
+            "notes": inspection.notes,
+            "created_at": inspection.created_at.isoformat(),
+            "updated_at": inspection.updated_at.isoformat() if inspection.updated_at else None
+        }
+            
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Get inspection by ID error: {e}")
+        raise HTTPException(status_code=500, detail="Failed to retrieve inspection")
+
+@app.get("/inspections/appointment/{appointment_id}")
+async def get_inspection_by_appointment_id(
+    appointment_id: str,
+    authorization: str = Header(...),
+    db: AsyncSession = Depends(get_db)
+):
+    """Get inspection by appointment ID with full details"""
+    try:
+        user = verify_token(authorization)
+        
+        result = await db.execute(
+            select(Inspection).where(Inspection.appointment_id == uuid.UUID(appointment_id))
+        )
+        inspection = result.scalar_one_or_none()
+        
+        if not inspection:
+            raise HTTPException(status_code=404, detail="Inspection not found for this appointment")
+        
+        return {
+            "id": str(inspection.id),
+            "appointment_id": str(inspection.appointment_id),
+            "technician_id": str(inspection.technician_id),
+            "results": inspection.results or {},
+            "final_status": inspection.final_status,
+            "notes": inspection.notes,
+            "created_at": inspection.created_at.isoformat(),
+            "updated_at": inspection.updated_at.isoformat() if inspection.updated_at else None
+        }
+            
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Get inspection by appointment ID error: {e}")
+        raise HTTPException(status_code=500, detail="Failed to retrieve inspection")
+
 # ============= ADMIN ENDPOINTS =============
 @app.get("/admin/inspections/all")
 async def get_all_inspections_admin(
