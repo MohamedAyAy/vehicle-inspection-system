@@ -39,7 +39,7 @@ class Notification(Base):
     channel: Mapped[str] = mapped_column(String(50), nullable=False)  # appointment, payment, inspection, auth
     subject: Mapped[str] = mapped_column(String(255), nullable=False)
     message: Mapped[str] = mapped_column(Text, nullable=False)
-    metadata: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)  # Extra data
+    extra_data: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)  # Extra data (renamed from metadata)
     is_read: Mapped[bool] = mapped_column(Boolean, default=False)
     sent_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     read_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
@@ -88,7 +88,7 @@ class SendNotificationRequest(BaseModel):
     channel: str  # appointment, payment, inspection, auth
     subject: str
     message: str
-    metadata: Optional[Dict[str, Any]] = None
+    extra_data: Optional[Dict[str, Any]] = None
 
 class NotificationResponse(BaseModel):
     id: str
@@ -110,7 +110,7 @@ def format_notification(notif: Notification) -> dict:
         "channel": notif.channel,
         "subject": notif.subject,
         "message": notif.message,
-        "metadata": notif.metadata,
+        "extra_data": notif.extra_data,
         "is_read": notif.is_read,
         "sent_at": notif.sent_at.isoformat(),
         "read_at": notif.read_at.isoformat() if notif.read_at else None
@@ -138,7 +138,7 @@ async def send_notification(
             channel=request.channel,
             subject=request.subject,
             message=request.message,
-            metadata=request.metadata or {}
+            extra_data=request.extra_data or {}
         )
         
         db.add(notification)
@@ -355,7 +355,7 @@ async def send_appointment_confirmation(
         channel="appointment",
         subject=template["subject"],
         message=template["message"],
-        metadata={"appointment_id": appointment_id, "vehicle_reg": vehicle_reg}
+        extra_data={"appointment_id": appointment_id, "vehicle_reg": vehicle_reg}
     )
     
     return await send_notification(request, db)
