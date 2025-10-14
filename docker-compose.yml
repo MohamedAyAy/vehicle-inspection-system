@@ -181,6 +181,73 @@ services:
       timeout: 10s
       retries: 3
 
+  # ============= NOTIFICATION SERVICE =============
+  notification-service:
+    build:
+      context: ./backend/notification-service
+      dockerfile: Dockerfile
+    container_name: vehicle-inspection-notification
+    environment:
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY}
+      JWT_ALGORITHM: ${JWT_ALGORITHM:-HS256}
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_USER: ${DB_USER:-admin}
+      DB_PASSWORD: ${DB_PASSWORD:-secure_password_change_this}
+      DB_NAME_NOTIFICATIONS: ${DB_NAME_NOTIFICATIONS:-notifications_db}
+      LOGGING_SERVICE_URL: http://logging-service:8005
+      FRONTEND_URL: ${FRONTEND_URL:-http://localhost:3000}
+    ports:
+      - "${NOTIFICATION_SERVICE_PORT:-8006}:8006"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      auth-service:
+        condition: service_healthy
+    networks:
+      - inspection-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8006/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # ============= FILE SERVICE =============
+  file-service:
+    build:
+      context: ./backend/file-service
+      dockerfile: Dockerfile
+    container_name: vehicle-inspection-file
+    environment:
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY}
+      JWT_ALGORITHM: ${JWT_ALGORITHM:-HS256}
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_USER: ${DB_USER:-admin}
+      DB_PASSWORD: ${DB_PASSWORD:-secure_password_change_this}
+      DB_NAME_FILES: ${DB_NAME_FILES:-files_db}
+      UPLOAD_DIR: /app/uploads
+      LOGGING_SERVICE_URL: http://logging-service:8005
+      FRONTEND_URL: ${FRONTEND_URL:-http://localhost:3000}
+    ports:
+      - "${FILE_SERVICE_PORT:-8007}:8007"
+    volumes:
+      - file_uploads:/app/uploads
+    depends_on:
+      postgres:
+        condition: service_healthy
+      auth-service:
+        condition: service_healthy
+    networks:
+      - inspection-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8007/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
   # ============= FRONTEND SERVICE =============
   frontend:
     image: nginx:alpine
@@ -207,6 +274,8 @@ services:
 
 volumes:
   postgres_data:
+    driver: local
+  file_uploads:
     driver: local
 
 networks:
