@@ -533,6 +533,13 @@
                         <label>Password</label>
                         <input type="password" id="loginPassword" required>
                     </div>
+                    <div class="form-group" style="padding: 15px; background: #f8f9fa; border: 1px solid #ddd; border-radius: 5px;">
+                        <label style="display: flex; align-items: center; cursor: pointer; margin: 0;">
+                            <input type="checkbox" id="loginRecaptcha" required style="width: auto; margin-right: 10px;">
+                            <span>I'm not a robot (reCAPTCHA placeholder)</span>
+                        </label>
+                        <small style="color: #666; margin-top: 5px; display: block;">✅ In production, this will be replaced with Google reCAPTCHA v2</small>
+                    </div>
                     <button type="submit" style="width: 100%; margin-bottom: 10px;">Login</button>
                     <button type="button" onclick="navigateTo('register')" style="width: 100%; background: #764ba2;">Create Account</button>
                 </form>
@@ -540,17 +547,47 @@
         </div>
 
         <div id="registerPage" class="page">
-            <div class="card" style="max-width: 400px; margin: 50px auto;">
+            <div class="card" style="max-width: 600px; margin: 50px auto;">
                 <h2 style="margin-bottom: 30px; text-align: center; color: #667eea;">Create Account</h2>
                 <div id="registerAlert" class="alert"></div>
                 <form onsubmit="handleRegister(event)">
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label>First Name (Optional)</label>
+                            <input type="text" id="registerFirstName" minlength="2" placeholder="John">
+                        </div>
+                        <div class="form-group">
+                            <label>Last Name (Optional)</label>
+                            <input type="text" id="registerLastName" minlength="2" placeholder="Doe">
+                        </div>
+                    </div>
                     <div class="form-group">
-                        <label>Email</label>
+                        <label>Email *</label>
                         <input type="email" id="registerEmail" required>
                     </div>
                     <div class="form-group">
-                        <label>Password</label>
+                        <label>Password * (minimum 8 characters)</label>
                         <input type="password" id="registerPassword" required minlength="8">
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label>Date of Birth (Optional - Must be 18+ if provided)</label>
+                            <input type="date" id="registerBirthdate" max="9999-12-31">
+                        </div>
+                        <div class="form-group">
+                            <label>ID/Passport Number (Optional)</label>
+                            <input type="text" id="registerIdNumber" minlength="5" placeholder="e.g., AB123456">
+                        </div>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label>Country (Optional)</label>
+                            <input type="text" id="registerCountry" placeholder="e.g., France">
+                        </div>
+                        <div class="form-group">
+                            <label>State/Province (Optional)</label>
+                            <input type="text" id="registerState" placeholder="e.g., Île-de-France">
+                        </div>
                     </div>
                     <div class="form-group" style="display: none;">
                         <label>Role</label>
@@ -560,6 +597,13 @@
                     </div>
                     <div class="alert info" style="display: block; margin-bottom: 15px;">
                         ℹ️ Public registration is for customers only. Technician accounts must be created by an administrator.
+                    </div>
+                    <div class="form-group" style="padding: 15px; background: #f8f9fa; border: 1px solid #ddd; border-radius: 5px;">
+                        <label style="display: flex; align-items: center; cursor: pointer; margin: 0;">
+                            <input type="checkbox" id="registerRecaptcha" required style="width: auto; margin-right: 10px;">
+                            <span>I'm not a robot (reCAPTCHA placeholder)</span>
+                        </label>
+                        <small style="color: #666; margin-top: 5px; display: block;">✅ In production, this will be replaced with Google reCAPTCHA v2</small>
                     </div>
                     <button type="submit" style="width: 100%; margin-bottom: 10px;">Register</button>
                     <button type="button" onclick="navigateTo('login')" style="width: 100%; background: #764ba2;">Back to Login</button>
@@ -707,11 +751,12 @@
                 <h2>Admin Dashboard</h2>
                 
                 <!-- Tab Navigation -->
-                <div style="display: flex; gap: 10px; margin-bottom: 30px; border-bottom: 2px solid #ddd; padding-bottom: 10px;">
+                <div style="display: flex; gap: 10px; margin-bottom: 30px; border-bottom: 2px solid #ddd; padding-bottom: 10px; flex-wrap: wrap;">
                     <button id="tabUsers" onclick="showAdminTab('users')" style="background: #667eea;">👥 Users</button>
                     <button id="tabLogs" onclick="showAdminTab('logs')" style="background: #667eea;">📋 Logs</button>
                     <button id="tabVehicles" onclick="showAdminTab('vehicles')" style="background: #667eea;">🚗 Vehicles</button>
                     <button id="tabAppointments" onclick="showAdminTab('appointments')" style="background: #667eea;">📅 Appointments</button>
+                    <button id="tabSchedule" onclick="showAdminTab('schedule')" style="background: #667eea;">📆 Schedule</button>
                 </div>
                 
                 <!-- Users Tab -->
@@ -770,7 +815,8 @@
                 
                 <!-- Vehicles Tab -->
                 <div id="adminVehiclesTab" class="admin-tab" style="display: none;">
-                    <h3>Inspected Vehicles</h3>
+                    <h3>All Vehicles</h3>
+                    <p style="color: #666; margin-bottom: 20px;">Complete list of all vehicles in the system with their inspection status</p>
                     <div id="adminVehiclesList"></div>
                 </div>
                 
@@ -779,23 +825,60 @@
                     <h3>All Appointments</h3>
                     <div id="adminAppointmentsList"></div>
                 </div>
+                
+                <!-- Schedule Tab -->
+                <div id="adminScheduleTab" class="admin-tab" style="display: none;">
+                    <h3>Weekly Schedule</h3>
+                    <p style="color: #666; margin-bottom: 20px;">View the same schedule that customers see for booking appointments</p>
+                    <div id="adminScheduleView"></div>
+                </div>
             </div>
         </div>
 
         <!-- Create User Modal -->
         <div id="createUserModal" class="modal">
-            <div class="modal-content">
+            <div class="modal-content" style="max-width: 600px;">
                 <span class="close" onclick="closeCreateUserModal()">&times;</span>
                 <h2>Create Technician Account</h2>
                 <div id="createUserAlert" class="alert"></div>
                 <form onsubmit="handleCreateTechnician(event)">
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label>First Name (Optional)</label>
+                            <input type="text" id="newTechFirstName" minlength="2" placeholder="Jane">
+                        </div>
+                        <div class="form-group">
+                            <label>Last Name (Optional)</label>
+                            <input type="text" id="newTechLastName" minlength="2" placeholder="Smith">
+                        </div>
+                    </div>
                     <div class="form-group">
-                        <label>Email</label>
+                        <label>Email *</label>
                         <input type="email" id="newTechEmail" required>
                     </div>
                     <div class="form-group">
-                        <label>Password</label>
+                        <label>Password * (minimum 8 characters)</label>
                         <input type="password" id="newTechPassword" required minlength="8">
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label>Date of Birth (Optional)</label>
+                            <input type="date" id="newTechBirthdate" max="9999-12-31">
+                        </div>
+                        <div class="form-group">
+                            <label>ID/Passport Number (Optional)</label>
+                            <input type="text" id="newTechIdNumber" minlength="5" placeholder="TECH123">
+                        </div>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label>Country (Optional)</label>
+                            <input type="text" id="newTechCountry" placeholder="France">
+                        </div>
+                        <div class="form-group">
+                            <label>State/Province (Optional)</label>
+                            <input type="text" id="newTechState" placeholder="Paris">
+                        </div>
                     </div>
                     <button type="submit" style="width: 100%;">Create Technician</button>
                 </form>
@@ -899,13 +982,29 @@
             const email = document.getElementById('registerEmail').value;
             const password = document.getElementById('registerPassword').value;
             const role = document.getElementById('registerRole').value;
+            const firstName = document.getElementById('registerFirstName').value;
+            const lastName = document.getElementById('registerLastName').value;
+            const birthdate = document.getElementById('registerBirthdate').value;
+            const country = document.getElementById('registerCountry').value;
+            const state = document.getElementById('registerState').value;
+            const idNumber = document.getElementById('registerIdNumber').value;
             const alert = document.getElementById('registerAlert');
 
             try {
                 const response = await fetch(`${SERVICES.auth}/register`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ email, password, role })
+                    body: JSON.stringify({ 
+                        email, 
+                        password, 
+                        role,
+                        first_name: firstName,
+                        last_name: lastName,
+                        birthdate,
+                        country,
+                        state,
+                        id_number: idNumber
+                    })
                 });
 
                 const data = await response.json();
@@ -1118,6 +1217,8 @@
                 loadAdminVehicles();
             } else if (tab === 'appointments') {
                 loadAdminAppointments();
+            } else if (tab === 'schedule') {
+                loadAdminSchedule();
             }
         }
         
@@ -1335,43 +1436,65 @@
         
         async function loadAdminVehicles() {
             const container = document.getElementById('adminVehiclesList');
-            container.innerHTML = '<div class="loading"><div class="spinner"></div></div>';
+            container.innerHTML = '<div class="loading"><div class="spinner"></div><p>Loading vehicles...</p></div>';
             
             try {
-                const response = await fetch(`${SERVICES.inspection}/admin/inspections/all`, {
+                // Fetch ALL vehicles from appointments, not just inspected ones
+                const response = await fetch(`${SERVICES.appointment}/appointments/admin/all-vehicles?limit=1000`, {
                     headers: { 'Authorization': `Bearer ${currentToken}` }
                 });
                 
+                if (!response.ok) {
+                    throw new Error(`Failed to fetch vehicles: ${response.status}`);
+                }
+                
                 const data = await response.json();
                 
-                if (data.inspections && data.inspections.length > 0) {
+                if (data.vehicles && data.vehicles.length > 0) {
+                    // Calculate statistics
+                    const stats = {
+                        total: data.vehicles.length,
+                        pending: data.vehicles.filter(v => v.status === 'pending').length,
+                        confirmed: data.vehicles.filter(v => v.status === 'confirmed').length,
+                        not_checked: data.vehicles.filter(v => v.inspection_status === 'not_checked').length,
+                        inspected: data.vehicles.filter(v => v.inspection_status !== 'not_checked').length
+                    };
+                    
                     container.innerHTML = `
-                        <p style="margin-bottom: 20px;"><strong>Total Inspections:</strong> ${data.total}</p>
+                        <div style="background: #f8f9fa; padding: 15px; border-radius: 5px; margin-bottom: 20px;">
+                            <p style="margin: 5px 0;"><strong>Total Vehicles:</strong> ${stats.total}</p>
+                            <p style="margin: 5px 0;"><strong>Payment Status:</strong> Pending: ${stats.pending}, Confirmed: ${stats.confirmed}</p>
+                            <p style="margin: 5px 0;"><strong>Inspection Status:</strong> Not Checked: ${stats.not_checked}, Inspected: ${stats.inspected}</p>
+                        </div>
                         <table>
                             <thead>
                                 <tr>
-                                    <th>Appointment ID</th>
-                                    <th>Technician ID</th>
-                                    <th>Status</th>
-                                    <th>Notes</th>
-                                    <th>Inspected At</th>
+                                    <th>Registration</th>
+                                    <th>Vehicle</th>
+                                    <th>User ID</th>
+                                    <th>Appointment Date</th>
+                                    <th>Payment Status</th>
+                                    <th>Inspection Status</th>
+                                    <th>Created</th>
                                 </tr>
                             </thead>
                             <tbody>
-                                ${data.inspections.map(insp => `
+                                ${data.vehicles.map(vehicle => `
                                     <tr>
-                                        <td><small>${insp.appointment_id}</small></td>
-                                        <td><small>${insp.technician_id}</small></td>
-                                        <td><span class="badge ${insp.final_status}">${insp.status_display}</span></td>
-                                        <td style="max-width: 300px; overflow: hidden; text-overflow: ellipsis;">${insp.notes || 'N/A'}</td>
-                                        <td><small>${new Date(insp.created_at).toLocaleString()}</small></td>
+                                        <td><strong>${vehicle.vehicle_info.registration}</strong></td>
+                                        <td>${vehicle.vehicle_info.brand} ${vehicle.vehicle_info.model} (${vehicle.vehicle_info.type})</td>
+                                        <td><small>${vehicle.user_id}</small></td>
+                                        <td><small>${vehicle.appointment_date ? new Date(vehicle.appointment_date).toLocaleString() : 'Not scheduled'}</small></td>
+                                        <td><span class="badge ${vehicle.status}">${vehicle.status}</span></td>
+                                        <td><span class="badge ${vehicle.inspection_status}">${vehicle.inspection_status.replace('_', ' ')}</span></td>
+                                        <td><small>${new Date(vehicle.created_at).toLocaleDateString()}</small></td>
                                     </tr>
                                 `).join('')}
                             </tbody>
                         </table>
                     `;
                 } else {
-                    container.innerHTML = '<p>No inspections found.</p>';
+                    container.innerHTML = '<p>No vehicles found in the system.</p>';
                 }
             } catch (error) {
                 console.error('Error loading vehicles:', error);
@@ -1429,6 +1552,114 @@
             }
         }
         
+        async function loadAdminSchedule() {
+            const container = document.getElementById('adminScheduleView');
+            const today = new Date();
+            const dayOfWeek = today.getDay() || 7;
+            const monday = new Date(today);
+            monday.setDate(today.getDate() - dayOfWeek + 1);
+            const startDate = monday.toISOString().split('T')[0];
+            
+            container.innerHTML = '<div class="loading"><div class="spinner"></div><p>Loading schedule...</p></div>';
+            
+            try {
+                const response = await fetch(
+                    `${SERVICES.appointment}/appointments/weekly-schedule?start_date=${startDate}`,
+                    { headers: { 'Authorization': `Bearer ${currentToken}` }}
+                );
+                
+                if (!response.ok) {
+                    const errorData = await response.json().catch(() => ({ detail: 'Unknown error' }));
+                    throw new Error(errorData.detail || `Server error: ${response.status}`);
+                }
+                
+                const schedule = await response.json();
+                
+                if (!schedule || !schedule.days || !Array.isArray(schedule.days)) {
+                    throw new Error('Invalid schedule data received from server');
+                }
+                
+                // Generate schedule view for admin
+                container.innerHTML = `
+                    <h4>📅 Current Week Schedule</h4>
+                    <p style="margin-bottom: 20px; color: #666;">Working hours: ${schedule.working_hours}</p>
+                    
+                    <div style="overflow-x: auto;">
+                        <table style="min-width: 100%;">
+                            <thead>
+                                <tr>
+                                    ${schedule.days.map(day => `
+                                        <th style="text-align: center;">
+                                            <strong>${day.day_name}</strong><br/>
+                                            <small>${new Date(day.date).toLocaleDateString()}</small><br/>
+                                            <span style="color: #4caf50; font-size: 12px;">${day.available_count} available</span>
+                                        </th>
+                                    `).join('')}
+                                </tr>
+                            </thead>
+                            <tbody>
+                                ${generateAdminScheduleGrid(schedule)}
+                            </tbody>
+                        </table>
+                    </div>
+                    
+                    <div style="margin-top: 20px; padding: 15px; background: #e8f5e9; border-radius: 5px;">
+                        <p style="margin: 0; color: #2e7d32;"><strong>Legend:</strong></p>
+                        <p style="margin: 5px 0; color: #2e7d32;">🟢 Available slot | 🔴 Booked slot</p>
+                    </div>
+                `;
+            } catch (error) {
+                console.error('Error loading admin schedule:', error);
+                container.innerHTML = `
+                    <div style="padding: 20px; background: #fff3cd; border: 1px solid #ffc107; border-radius: 5px;">
+                        <h4 style="color: #856404; margin-top: 0;">⚠️ Unable to Load Schedule</h4>
+                        <p style="color: #856404;"><strong>Error:</strong> ${error.message}</p>
+                        <button onclick="loadAdminSchedule()" style="margin-top: 10px;">🔄 Retry</button>
+                    </div>
+                `;
+            }
+        }
+        
+        function generateAdminScheduleGrid(schedule) {
+            if (!schedule.days || schedule.days.length === 0) return '<tr><td colspan="7" style="text-align: center;">No data</td></tr>';
+            
+            // Show all slots (available and booked) for admin view
+            let html = '<tr>';
+            
+            schedule.days.forEach(day => {
+                html += '<td style="vertical-align: top; padding: 15px;">';
+                
+                if (day.slots && day.slots.length > 0) {
+                    day.slots.forEach(slot => {
+                        const bgColor = slot.available ? '#e8f5e9' : '#ffebee';
+                        const borderColor = slot.available ? '#4caf50' : '#f44336';
+                        const icon = slot.available ? '🟢' : '🔴';
+                        
+                        html += `
+                            <div style="
+                                background: ${bgColor};
+                                border: 1px solid ${borderColor};
+                                padding: 6px 10px;
+                                margin-bottom: 6px;
+                                border-radius: 4px;
+                                text-align: center;
+                                font-size: 13px;
+                            ">
+                                ${icon} ${slot.display}
+                            </div>
+                        `;
+                    });
+                } else {
+                    html += '<div style="color: #999; text-align: center; padding: 20px;">No slots</div>';
+                }
+                
+                html += '</td>';
+            });
+            
+            html += '</tr>';
+            return html;
+        }
+        
         // User Management Modals
         function showCreateUserModal() {
             document.getElementById('createUserModal').style.display = 'block';
@@ -1438,6 +1669,12 @@
             document.getElementById('createUserModal').style.display = 'none';
             document.getElementById('newTechEmail').value = '';
             document.getElementById('newTechPassword').value = '';
+            document.getElementById('newTechFirstName').value = '';
+            document.getElementById('newTechLastName').value = '';
+            document.getElementById('newTechBirthdate').value = '';
+            document.getElementById('newTechCountry').value = '';
+            document.getElementById('newTechState').value = '';
+            document.getElementById('newTechIdNumber').value = '';
         }
         
         async function handleCreateTechnician(event) {
@@ -1446,6 +1683,12 @@
             
             const email = document.getElementById('newTechEmail').value;
             const password = document.getElementById('newTechPassword').value;
+            const firstName = document.getElementById('newTechFirstName').value;
+            const lastName = document.getElementById('newTechLastName').value;
+            const birthdate = document.getElementById('newTechBirthdate').value;
+            const country = document.getElementById('newTechCountry').value;
+            const state = document.getElementById('newTechState').value;
+            const idNumber = document.getElementById('newTechIdNumber').value;
             
             try {
                 const response = await fetch(`${SERVICES.auth}/admin/users/create-technician`, {
@@ -1454,7 +1697,16 @@
                         'Content-Type': 'application/json',
                         'Authorization': `Bearer ${currentToken}`
                     },
-                    body: JSON.stringify({ email, password })
+                    body: JSON.stringify({ 
+                        email, 
+                        password,
+                        first_name: firstName,
+                        last_name: lastName,
+                        birthdate,
+                        country,
+                        state,
+                        id_number: idNumber
+                    })
                 });
                 
                 const data = await response.json();
@@ -1672,7 +1924,7 @@
                 
                 if (data.vehicles && data.vehicles.length > 0) {
                     content.innerHTML = `
-                        <h2>🚗 Vehicles Ready for Inspection</h2>
+                        <h2>🚗 All Vehicles for Inspection</h2>
                         <p style="margin-bottom: 20px;">Total: <strong>${data.total_count}</strong> vehicles | Not Checked: <strong>${data.by_status.not_checked}</strong> | In Progress: <strong>${data.by_status.in_progress}</strong></p>
                         <table>
                             <thead>
@@ -1680,7 +1932,8 @@
                                     <th>Registration</th>
                                     <th>Vehicle</th>
                                     <th>Appointment Time</th>
-                                    <th>Status</th>
+                                    <th>Payment Status</th>
+                                    <th>Inspection Status</th>
                                     <th>Action</th>
                                 </tr>
                             </thead>
@@ -1690,6 +1943,7 @@
                                         <td><strong>${v.vehicle_info.registration}</strong></td>
                                         <td>${v.vehicle_info.brand} ${v.vehicle_info.model} (${v.vehicle_info.type})</td>
                                         <td>${v.appointment_time}</td>
+                                        <td>${v.payment_status_display || '⏳ Pending'}</td>
                                         <td><span class="badge ${v.status}">${v.status_display}</span></td>
                                         <td>
                                             ${v.status === 'not_checked' || v.status === 'in_progress' ? 
@@ -1703,7 +1957,7 @@
                         </table>
                     `;
                 } else {
-                    content.innerHTML = '<p>No vehicles ready for inspection.</p>';
+                    content.innerHTML = '<p>No vehicles for inspection yet.</p>';
                 }
             } catch (error) {
                 content.innerHTML = `<p style="color: red;">Error loading vehicles: ${error.message}</p>`;
@@ -1814,15 +2068,36 @@
         }
 
         // ============= INITIALIZATION =============
-        window.addEventListener('load', () => {
+        window.addEventListener('load', async () => {
             const savedToken = localStorage.getItem('token');
             const savedUser = localStorage.getItem('user');
 
             if (savedToken && savedUser) {
-                currentToken = savedToken;
-                currentUser = JSON.parse(savedUser);
-                setupUI();
-                navigateTo('dashboard');
+                // Verify token is still valid
+                try {
+                    const response = await fetch(`${SERVICES.auth}/verify`, {
+                        headers: { 'Authorization': `Bearer ${savedToken}` }
+                    });
+                    
+                    if (response.ok) {
+                        currentToken = savedToken;
+                        currentUser = JSON.parse(savedUser);
+                        setupUI();
+                        navigateTo('dashboard');
+                    } else {
+                        // Token invalid, clear and show login
+                        console.log('Stored token is invalid, clearing...');
+                        localStorage.removeItem('token');
+                        localStorage.removeItem('user');
+                        navigateTo('login');
+                    }
+                } catch (error) {
+                    // If verification fails, clear storage
+                    console.log('Error verifying token, clearing...');
+                    localStorage.removeItem('token');
+                    localStorage.removeItem('user');
+                    navigateTo('login');
+                }
             } else {
                 navigateTo('login');
             }

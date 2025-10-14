@@ -21,7 +21,7 @@ import httpx
 # SQLAlchemy imports
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
 from sqlalchemy.orm import declarative_base, Mapped, mapped_column
-from sqlalchemy import String, Boolean, DateTime, select, func
+from sqlalchemy import String, Boolean, DateTime, select, func, text
 from sqlalchemy.dialects.postgresql import UUID
 import uuid
 
@@ -32,6 +32,10 @@ load_dotenv()
 JWT_SECRET_KEY = os.getenv("JWT_SECRET_KEY", "your-super-secret-key-change-this-in-production")
 JWT_ALGORITHM = os.getenv("JWT_ALGORITHM", "HS256")
 JWT_EXPIRATION_HOURS = int(os.getenv("JWT_EXPIRATION_HOURS", "24"))
+
+# Session timeout in minutes (default: 15 minutes, configurable by admin)
+DEFAULT_SESSION_TIMEOUT_MINUTES = int(os.getenv("DEFAULT_SESSION_TIMEOUT_MINUTES", "15"))
+MAX_SESSION_TIMEOUT_MINUTES = int(os.getenv("MAX_SESSION_TIMEOUT_MINUTES", "1440"))  # 24 hours max
 
 DB_HOST = os.getenv("DB_HOST", "localhost")
 DB_PORT = int(os.getenv("DB_PORT", "5432"))
@@ -57,6 +61,12 @@ class RegisterRequest(BaseModel):
     email: EmailStr
     password: str
     role: str = "customer"
+    first_name: Optional[str] = "User"
+    last_name: Optional[str] = "Account"
+    birthdate: Optional[str] = "1990-01-01"  # Format: YYYY-MM-DD
+    country: Optional[str] = "Unknown"
+    state: Optional[str] = None
+    id_number: Optional[str] = None  # National ID or passport number
     
     @field_validator("password")
     @classmethod
@@ -72,6 +82,37 @@ class RegisterRequest(BaseModel):
         if v not in valid_roles:
             raise ValueError(f"Role must be one of {valid_roles}")
         return v
+    
+    @field_validator("first_name", "last_name")
+    @classmethod
+    def name_valid(cls, v):
+        if v and len(v) < 2:
+            raise ValueError("Name must be at least 2 characters")
+        return v.strip() if v else v
+    
+    @field_validator("birthdate")
+    @classmethod
+    def birthdate_valid(cls, v):
+        if not v or v == "1990-01-01":
+            return v
+        try:
+            date_obj = datetime.strptime(v, "%Y-%m-%d")
+            # Check if user is at least 18 years old
+            age = (datetime.now() - date_obj).days // 365
+            if age < 18:
+                raise ValueError("You must be at least 18 years old")
+            return v
+        except ValueError as e:
+            if "at least 18" in str(e):
+                raise e
+            raise ValueError("Invalid date format. Use YYYY-MM-DD")
+    
+    @field_validator("id_number")
+    @classmethod
+    def id_valid(cls, v):
+        if v and len(v) < 5:
+            raise ValueError("ID number must be at least 5 characters")
+        return v.strip() if v else v
 
 class LoginRequest(BaseModel):
     email: EmailStr
@@ -99,6 +140,13 @@ class Account(Base):
     password_hash: Mapped[str] = mapped_column(String(255), nullable=False)
     role: Mapped[str] = mapped_column(String(50), nullable=False, default="customer")
     is_verified: Mapped[bool] = mapped_column(Boolean, default=False)
+    first_name: Mapped[Optional[str]] = mapped_column(String(100), nullable=True, default="User")
+    last_name: Mapped[Optional[str]] = mapped_column(String(100), nullable=True, default="Account")
+    birthdate: Mapped[Optional[str]] = mapped_column(String(10), nullable=True, default="1990-01-01")  # YYYY-MM-DD
+    country: Mapped[Optional[str]] = mapped_column(String(100), nullable=True, default="Unknown")
+    state: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    id_number: Mapped[Optional[str]] = mapped_column(String(100), nullable=True, unique=True, index=True)
+    session_timeout_minutes: Mapped[str] = mapped_column(String(10), nullable=True, default=str(DEFAULT_SESSION_TIMEOUT_MINUTES))  # Configurable session timeout
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
@@ -130,6 +178,61 @@ async def init_db():
         async with engine.begin() as conn:
             await conn.run_sync(Base.metadata.create_all)
         logger.info("✓ Database tables initialized successfully")
+        
+        # Try to add new columns if they don't exist (for backward compatibility)
+        try:
+            async with engine.begin() as conn:
+                await conn.execute(text("""
+                    DO $$ 
+                    BEGIN
+                        -- Add first_name if it doesn't exist
+                        IF NOT EXISTS (SELECT 1 FROM information_schema.columns 
+                                      WHERE table_name='accounts' AND column_name='first_name') THEN
+                            ALTER TABLE accounts ADD COLUMN first_name VARCHAR(100) DEFAULT 'User';
+                        END IF;
+                        
+                        -- Add last_name if it doesn't exist
+                        IF NOT EXISTS (SELECT 1 FROM information_schema.columns 
+                                      WHERE table_name='accounts' AND column_name='last_name') THEN
+                            ALTER TABLE accounts ADD COLUMN last_name VARCHAR(100) DEFAULT 'Account';
+                        END IF;
+                        
+                        -- Add birthdate if it doesn't exist
+                        IF NOT EXISTS (SELECT 1 FROM information_schema.columns 
+                                      WHERE table_name='accounts' AND column_name='birthdate') THEN
+                            ALTER TABLE accounts ADD COLUMN birthdate VARCHAR(10) DEFAULT '1990-01-01';
+                        END IF;
+                        
+                        -- Add country if it doesn't exist
+                        IF NOT EXISTS (SELECT 1 FROM information_schema.columns 
+                                      WHERE table_name='accounts' AND column_name='country') THEN
+                            ALTER TABLE accounts ADD COLUMN country VARCHAR(100) DEFAULT 'Unknown';
+                        END IF;
+                        
+                        -- Add state if it doesn't exist
+                        IF NOT EXISTS (SELECT 1 FROM information_schema.columns 
+                                      WHERE table_name='accounts' AND column_name='state') THEN
+                            ALTER TABLE accounts ADD COLUMN state VARCHAR(100);
+                        END IF;
+                        
+                        -- Add id_number if it doesn't exist
+                        IF NOT EXISTS (SELECT 1 FROM information_schema.columns 
+                                      WHERE table_name='accounts' AND column_name='id_number') THEN
+                            ALTER TABLE accounts ADD COLUMN id_number VARCHAR(100) UNIQUE;
+                            CREATE INDEX IF NOT EXISTS idx_accounts_id_number ON accounts(id_number);
+                        END IF;
+                        
+                        -- Add session_timeout_minutes if it doesn't exist
+                        IF NOT EXISTS (SELECT 1 FROM information_schema.columns 
+                                      WHERE table_name='accounts' AND column_name='session_timeout_minutes') THEN
+                            ALTER TABLE accounts ADD COLUMN session_timeout_minutes VARCHAR(10) DEFAULT '15';
+                        END IF;
+                    END $$;
+                """))
+            logger.info("✓ Database schema migration completed successfully")
+        except Exception as migration_error:
+            logger.warning(f"⚠ Database migration warning (may be normal if columns exist): {migration_error}")
+            
     except Exception as e:
         logger.error(f"✗ Failed to initialize database: {e}")
         raise
@@ -161,13 +264,13 @@ def verify_password(password: str, password_hash: str) -> bool:
     """Verify password against hash"""
     return bcrypt.checkpw(password.encode(), password_hash.encode())
 
-def create_access_token(email: str, role: str, user_id: str) -> str:
-    """Create JWT token"""
+def create_access_token(email: str, role: str, user_id: str, session_timeout_minutes: int = DEFAULT_SESSION_TIMEOUT_MINUTES) -> str:
+    """Create JWT token with configurable session timeout"""
     payload = {
         "email": email,
         "role": role,
         "user_id": user_id,
-        "exp": datetime.utcnow() + timedelta(hours=JWT_EXPIRATION_HOURS),
+        "exp": datetime.utcnow() + timedelta(minutes=session_timeout_minutes),
         "iat": datetime.utcnow()
     }
     token = jwt.encode(payload, JWT_SECRET_KEY, algorithm=JWT_ALGORITHM)
@@ -211,9 +314,21 @@ app.add_middleware(
 
 # ============= ENDPOINTS =============
 @app.get("/health")
-async def health_check():
+def health_check():
     """Health check endpoint"""
-    return {"status": "healthy", "service": "auth-service"}
+    return {"status": "healthy", "service": "auth-service", "timestamp": datetime.utcnow().isoformat()}
+
+@app.get("/verify")
+async def verify_token_endpoint(authorization: str = Header(...)):
+    """Verify if a token is valid"""
+    try:
+        token = authorization.replace("Bearer ", "")
+        payload = verify_token(token)
+        return {"valid": True, "user": payload}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=401, detail="Invalid or expired token")
 
 @app.post("/register", response_model=UserResponse)
 async def register(request: RegisterRequest, db: AsyncSession = Depends(get_db)):
@@ -246,7 +361,13 @@ async def register(request: RegisterRequest, db: AsyncSession = Depends(get_db))
         new_user = Account(
             email=request.email,
             password_hash=password_hash,
-            role="customer"
+            role="customer",
+            first_name=request.first_name,
+            last_name=request.last_name,
+            birthdate=request.birthdate,
+            country=request.country,
+            state=request.state,
+            id_number=request.id_number
         )
         db.add(new_user)
         await db.flush()
@@ -290,11 +411,13 @@ async def login(request: LoginRequest, db: AsyncSession = Depends(get_db)):
                           f"Failed password for user: {request.email}")
             raise HTTPException(status_code=401, detail="Invalid credentials")
         
-        # Create token
+        # Create token with user's session timeout setting
+        session_timeout = int(user.session_timeout_minutes) if user.session_timeout_minutes else DEFAULT_SESSION_TIMEOUT_MINUTES
         token = create_access_token(
             email=user.email,
             role=user.role,
-            user_id=str(user.id)
+            user_id=str(user.id),
+            session_timeout_minutes=session_timeout
         )
         
         await log_event("AuthService", "login.success", "INFO",
@@ -434,11 +557,17 @@ async def create_technician(
         # Hash password
         password_hash = hash_password(request.password)
         
-        # Create technician
+        # Create technician with required fields
         new_technician = Account(
             email=request.email,
             password_hash=password_hash,
-            role="technician"
+            role="technician",
+            first_name=request.first_name,
+            last_name=request.last_name,
+            birthdate=request.birthdate,
+            country=request.country,
+            state=request.state,
+            id_number=request.id_number
         )
         db.add(new_technician)
         await db.flush()
@@ -507,6 +636,79 @@ async def change_user_role(
     except Exception as e:
         logger.error(f"Change role error: {e}")
         raise HTTPException(status_code=500, detail="Failed to change user role")
+
+@app.put("/admin/users/{user_id}/session-timeout")
+async def update_session_timeout(
+    user_id: str,
+    timeout_minutes: int,
+    authorization: str = Header(...),
+    db: AsyncSession = Depends(get_db)
+):
+    """Update user's session timeout (admin only)"""
+    try:
+        admin_user = verify_token(authorization.replace("Bearer ", ""))
+        
+        if admin_user.get("role") != "admin":
+            raise HTTPException(status_code=403, detail="Admin access required")
+        
+        # Validate timeout
+        if timeout_minutes < 5:
+            raise HTTPException(status_code=400, detail="Session timeout must be at least 5 minutes")
+        if timeout_minutes > MAX_SESSION_TIMEOUT_MINUTES:
+            raise HTTPException(status_code=400, detail=f"Session timeout cannot exceed {MAX_SESSION_TIMEOUT_MINUTES} minutes (24 hours)")
+        
+        # Find user
+        result = await db.execute(
+            select(Account).where(Account.id == uuid.UUID(user_id))
+        )
+        target_user = result.scalar_one_or_none()
+        
+        if not target_user:
+            raise HTTPException(status_code=404, detail="User not found")
+        
+        old_timeout = target_user.session_timeout_minutes
+        target_user.session_timeout_minutes = str(timeout_minutes)
+        await db.flush()
+        
+        await log_event("AuthService", "admin.update_session_timeout", "INFO",
+                      f"Admin {admin_user.get('email')} changed {target_user.email} session timeout from {old_timeout} to {timeout_minutes} minutes at {datetime.utcnow().isoformat()}")
+        
+        return {
+            "id": str(target_user.id),
+            "email": target_user.email,
+            "old_timeout_minutes": old_timeout,
+            "new_timeout_minutes": timeout_minutes,
+            "updated_at": datetime.utcnow().isoformat()
+        }
+            
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Update session timeout error: {e}")
+        raise HTTPException(status_code=500, detail="Failed to update session timeout")
+
+@app.get("/admin/session-config")
+async def get_session_config(
+    authorization: str = Header(...)
+):
+    """Get session configuration (admin only)"""
+    try:
+        admin_user = verify_token(authorization.replace("Bearer ", ""))
+        
+        if admin_user.get("role") != "admin":
+            raise HTTPException(status_code=403, detail="Admin access required")
+        
+        return {
+            "default_timeout_minutes": DEFAULT_SESSION_TIMEOUT_MINUTES,
+            "max_timeout_minutes": MAX_SESSION_TIMEOUT_MINUTES,
+            "min_timeout_minutes": 5
+        }
+            
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Get session config error: {e}")
+        raise HTTPException(status_code=500, detail="Failed to retrieve session configuration")
 
 if __name__ == "__main__":
     import uvicorn

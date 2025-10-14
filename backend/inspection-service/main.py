@@ -221,79 +221,95 @@ async def get_vehicles_for_inspection(
         await log_event("InspectionService", "user.view_vehicles", "INFO",
                       f"User {user.get('email')} (role: {user.get('role')}) viewed vehicle list at {datetime.utcnow().isoformat()}")
         
-        # Fetch confirmed appointments from Appointment Service
+        # Fetch ALL appointments from Appointment Service (both paid and unpaid)
         try:
             async with httpx.AsyncClient() as client:
                 response = await client.get(
                     f"{APPOINTMENT_SERVICE_URL}/appointments/all",
                     headers={"Authorization": authorization},
-                    params={"status": "confirmed"},
+                    # No status filter - get ALL appointments
                     timeout=5.0
                 )
                 
                 if response.status_code == 200:
                     appointments = response.json()
+                    logger.info(f"Fetched {len(appointments)} appointments from appointment service")
                     
                     # Build comprehensive vehicle list
                     vehicles = []
                     for apt in appointments:
-                        # Check if inspection exists for this appointment
-                        result = await db.execute(
-                            select(Inspection)
-                            .where(Inspection.appointment_id == uuid.UUID(apt["id"]))
-                        )
-                        inspection = result.scalar_one_or_none()
-                        
-                        # Parse appointment date
-                        apt_datetime = datetime.fromisoformat(apt.get("appointment_date")) if apt.get("appointment_date") else None
-                        
-                        vehicle_data = {
-                            "appointment_id": apt["id"],
-                            "vehicle_info": {
-                                "type": apt["vehicle_info"].get("type"),
-                                "registration": apt["vehicle_info"].get("registration"),
-                                "brand": apt["vehicle_info"].get("brand"),
-                                "model": apt["vehicle_info"].get("model")
-                            },
-                            "appointment_date": apt.get("appointment_date"),
-                            "appointment_time": apt_datetime.strftime("%Y-%m-%d %H:%M") if apt_datetime else "Not scheduled",
-                            "user_id": apt["user_id"]
-                        }
-                        
-                        if not inspection:
-                            # No inspection yet
-                            vehicle_data.update({
-                                "inspection_id": None,
-                                "status": "not_checked",
-                                "status_display": "Not Checked Yet",
-                                "can_start": True,
-                                "results": None,
-                                "notes": None
-                            })
-                        else:
-                            # Inspection exists
-                            vehicle_data.update({
-                                "inspection_id": str(inspection.id),
-                                "status": inspection.final_status,
-                                "status_display": {
-                                    "not_checked": "Not Checked Yet",
-                                    "in_progress": "In Progress",
-                                    "passed": "Passed",
-                                    "failed": "Failed",
-                                    "passed_with_minor_issues": "Passed with Minor Issues"
-                                }.get(inspection.final_status, inspection.final_status),
-                                "can_continue": inspection.final_status == "in_progress",
-                                "results": inspection.results,
-                                "notes": inspection.notes,
-                                "inspected_at": inspection.created_at.isoformat()
-                            })
-                        
-                        vehicles.append(vehicle_data)
+                        try:
+                            # Check if inspection exists for this appointment
+                            result = await db.execute(
+                                select(Inspection)
+                                .where(Inspection.appointment_id == uuid.UUID(apt["id"]))
+                            )
+                            inspection = result.scalar_one_or_none()
+                            
+                            # Parse appointment date safely
+                            apt_datetime = None
+                            if apt.get("appointment_date"):
+                                try:
+                                    apt_datetime = datetime.fromisoformat(apt.get("appointment_date"))
+                                except:
+                                    logger.warning(f"Could not parse date for appointment {apt['id']}")
+                            
+                            vehicle_data = {
+                                "appointment_id": apt["id"],
+                                "vehicle_info": {
+                                    "type": apt["vehicle_info"].get("type"),
+                                    "registration": apt["vehicle_info"].get("registration"),
+                                    "brand": apt["vehicle_info"].get("brand"),
+                                    "model": apt["vehicle_info"].get("model")
+                                },
+                                "appointment_date": apt.get("appointment_date"),
+                                "appointment_time": apt_datetime.strftime("%Y-%m-%d %H:%M") if apt_datetime else "Not scheduled",
+                                "user_id": apt["user_id"],
+                                "payment_status": apt.get("status", "pending"),  # Show if paid (confirmed) or unpaid (pending)
+                                "payment_status_display": "Paid" if apt.get("status") == "confirmed" else "Not Paid"
+                            }
+                            
+                            if not inspection:
+                                # No inspection yet
+                                vehicle_data.update({
+                                    "inspection_id": None,
+                                    "status": "not_checked",
+                                    "status_display": "Not Checked Yet",
+                                    "can_start": True,
+                                    "results": None,
+                                    "notes": None
+                                })
+                            else:
+                                # Inspection exists
+                                vehicle_data.update({
+                                    "inspection_id": str(inspection.id),
+                                    "status": inspection.final_status,
+                                    "status_display": {
+                                        "not_checked": "Not Checked Yet",
+                                        "in_progress": "In Progress",
+                                        "passed": "Passed",
+                                        "failed": "Failed",
+                                        "passed_with_minor_issues": "Passed with Minor Issues"
+                                    }.get(inspection.final_status, inspection.final_status),
+                                    "can_continue": inspection.final_status == "in_progress",
+                                    "results": inspection.results,
+                                    "notes": inspection.notes,
+                                    "inspected_at": inspection.created_at.isoformat()
+                                })
+                            
+                            vehicles.append(vehicle_data)
+                            logger.info(f"Added vehicle: {vehicle_data['vehicle_info']['registration']}")
+                        except Exception as vehicle_error:
+                            logger.error(f"Error processing appointment {apt.get('id')}: {vehicle_error}", exc_info=True)
+                            # Continue with next appointment instead of failing completely
+                            continue
                     
                     # Sort by appointment time
                     vehicles.sort(key=lambda x: x.get("appointment_date") or "")
                     
-                    return {
+                    logger.info(f"Returning {len(vehicles)} vehicles to technician")
+                    
+                    result = {
                         "vehicles": vehicles,
                         "total_count": len(vehicles),
                         "by_status": {
@@ -304,15 +320,33 @@ async def get_vehicles_for_inspection(
                             "passed_with_minor_issues": len([v for v in vehicles if v.get("status") == "passed_with_minor_issues"])
                         }
                     }
+                    
+                    logger.info(f"Result summary: {result['total_count']} total, {result['by_status']['not_checked']} not checked")
+                    return result
                 else:
                     logger.warning(f"Appointment service returned status {response.status_code}")
-                    return {"vehicles": [], "total_count": 0, "error": f"Appointment service error: {response.status_code}"}
+                    return {
+                        "vehicles": [], 
+                        "total_count": 0, 
+                        "by_status": {"not_checked": 0, "in_progress": 0, "passed": 0, "failed": 0, "passed_with_minor_issues": 0},
+                        "error": f"Appointment service error: {response.status_code}"
+                    }
         except httpx.TimeoutException:
             logger.error("Timeout fetching appointments from appointment service")
-            return {"vehicles": [], "total_count": 0, "error": "Appointment service timeout"}
+            return {
+                "vehicles": [], 
+                "total_count": 0, 
+                "by_status": {"not_checked": 0, "in_progress": 0, "passed": 0, "failed": 0, "passed_with_minor_issues": 0},
+                "error": "Appointment service timeout"
+            }
         except Exception as e:
             logger.error(f"Error fetching appointments: {e}", exc_info=True)
-            return {"vehicles": [], "total_count": 0, "error": str(e)}
+            return {
+                "vehicles": [], 
+                "total_count": 0, 
+                "by_status": {"not_checked": 0, "in_progress": 0, "passed": 0, "failed": 0, "passed_with_minor_issues": 0},
+                "error": str(e)
+            }
             
     except HTTPException:
         raise
