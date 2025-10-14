@@ -42,6 +42,36 @@
         .nav-buttons {
             display: flex;
             gap: 10px;
+            align-items: center;
+        }
+
+        .notification-bell {
+            position: relative;
+            cursor: pointer;
+            font-size: 24px;
+            margin-right: 10px;
+            transition: transform 0.3s ease;
+        }
+
+        .notification-bell:hover {
+            transform: scale(1.1);
+        }
+
+        .notification-badge {
+            position: absolute;
+            top: -8px;
+            right: -8px;
+            background: #ff6b6b;
+            color: white;
+            border-radius: 50%;
+            padding: 2px 6px;
+            font-size: 11px;
+            font-weight: bold;
+            display: none;
+        }
+
+        .notification-badge.active {
+            display: block;
         }
 
         button {
@@ -67,6 +97,63 @@
 
         button.logout:hover {
             background: #ff5252;
+        }
+
+        .upload-area {
+            border: 2px dashed #1abc9c;
+            border-radius: 10px;
+            padding: 20px;
+            text-align: center;
+            background: #f8f9fa;
+            cursor: pointer;
+            transition: all 0.3s ease;
+        }
+
+        .upload-area:hover {
+            background: #e9ecef;
+            border-color: #16a085;
+        }
+
+        .upload-area.dragover {
+            background: #d4edda;
+            border-color: #28a745;
+        }
+
+        .file-preview {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+            margin-top: 15px;
+        }
+
+        .file-preview-item {
+            position: relative;
+            width: 100px;
+            height: 100px;
+            border-radius: 5px;
+            overflow: hidden;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+        }
+
+        .file-preview-item img {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+        }
+
+        .file-preview-item .remove-file {
+            position: absolute;
+            top: 5px;
+            right: 5px;
+            background: #ff6b6b;
+            color: white;
+            border: none;
+            border-radius: 50%;
+            width: 25px;
+            height: 25px;
+            cursor: pointer;
+            font-size: 12px;
+            padding: 0;
         }
 
         .page {
@@ -513,6 +600,10 @@
             <button id="navAppointments" onclick="navigateTo('appointments')" style="display: none;">Appointments</button>
             <button id="navInspection" onclick="navigateTo('inspection')" style="display: none;">Inspections</button>
             <button id="navAdmin" onclick="navigateTo('admin')" style="display: none;">Admin</button>
+            <div class="notification-bell" onclick="openNotifications()" id="notificationBell" style="display: none;">
+                🔔
+                <span class="notification-badge" id="notificationBadge"></span>
+            </div>
             <button class="logout" onclick="logout()">Logout</button>
         </div>
     </header>
@@ -739,6 +830,18 @@
                         <textarea id="inspectionNotes" rows="4" placeholder="Additional notes..."></textarea>
                     </div>
 
+                    <div class="form-group">
+                        <label>📷 Upload Vehicle Photos (NEW Feature!)</label>
+                        <div class="upload-area" id="uploadArea" onclick="document.getElementById('fileInput').click()">
+                            <p style="margin: 0; color: #666;">
+                                📁 Click to upload or drag & drop photos<br>
+                                <small>Supported: JPG, PNG, GIF, WEBP (Max 10MB each)</small>
+                            </p>
+                            <input type="file" id="fileInput" multiple accept="image/*" style="display: none;" onchange="handleFileSelect(event)">
+                        </div>
+                        <div id="filePreview" class="file-preview"></div>
+                    </div>
+
                     <button type="submit">Submit Inspection</button>
                 </form>
             </div>
@@ -908,6 +1011,20 @@
                 <button onclick="processPayment()" style="width: 100%;">✅ Confirm Payment (Simulated)</button>
             </div>
         </div>
+
+        <!-- Notifications Modal (NEW FEATURE!) -->
+        <div id="notificationsModal" class="modal">
+            <div class="modal-content" style="max-width: 600px;">
+                <span class="close" onclick="closeNotifications()">&times;</span>
+                <h2>🔔 Notifications</h2>
+                <div style="margin-bottom: 20px;">
+                    <button onclick="markAllNotificationsRead()" style="background: #6c757d;">Mark All as Read</button>
+                </div>
+                <div id="notificationsList" style="max-height: 400px; overflow-y: auto;">
+                    <p style="text-align: center; color: #666;">Loading notifications...</p>
+                </div>
+            </div>
+        </div>
     </div>
 
     <script>
@@ -1016,10 +1133,22 @@
                 }
 
                 showAlert(alert, 'Registration successful! Logging in...', 'success');
-                setTimeout(() => {
+                
+                // Send welcome notification (NEW FEATURE!)
+                // Note: This will be sent after login
+                setTimeout(async () => {
                     document.getElementById('loginEmail').value = email;
                     document.getElementById('loginPassword').value = password;
-                    handleLogin(new Event('submit'));
+                    await handleLogin(new Event('submit'));
+                    
+                    // Send welcome notification after login
+                    setTimeout(() => {
+                        sendNotification(
+                            '🎉 Welcome to Vehicle Inspection Center!',
+                            'Thank you for registering! You can now book appointments for vehicle inspections.',
+                            'general'
+                        );
+                    }, 2000);
                 }, 1000);
             } catch (error) {
                 showAlert(alert, 'Connection error: ' + error.message, 'error');
@@ -1052,6 +1181,14 @@
             document.getElementById('navAppointments').style.display = currentUser.role === 'customer' ? 'block' : 'none';
             document.getElementById('navInspection').style.display = currentUser.role === 'technician' ? 'block' : 'none';
             document.getElementById('navAdmin').style.display = currentUser.role === 'admin' ? 'block' : 'none';
+            
+            // Show notification bell (NEW FEATURE!)
+            document.getElementById('notificationBell').style.display = 'block';
+            
+            // Load notifications
+            loadNotificationCount();
+            // Check for new notifications every 30 seconds
+            setInterval(loadNotificationCount, 30000);
         }
 
         function showAlert(element, message, type) {
@@ -1060,6 +1197,221 @@
             element.style.display = 'block';
             setTimeout(() => element.style.display = 'none', 5000);
         }
+
+        // ============= NOTIFICATIONS (NEW FEATURE!) =============
+        async function loadNotificationCount() {
+            if (!currentUser || !currentToken) return;
+            
+            try {
+                const response = await fetch(`${SERVICES.notification}/notifications/user/${currentUser.id}`, {
+                    headers: { 'Authorization': `Bearer ${currentToken}` }
+                });
+                
+                if (response.ok) {
+                    const data = await response.json();
+                    const badge = document.getElementById('notificationBadge');
+                    if (data.unread_count > 0) {
+                        badge.textContent = data.unread_count;
+                        badge.classList.add('active');
+                    } else {
+                        badge.classList.remove('active');
+                    }
+                }
+            } catch (error) {
+                console.log('Could not load notifications:', error);
+            }
+        }
+
+        async function openNotifications() {
+            const modal = document.getElementById('notificationsModal');
+            const list = document.getElementById('notificationsList');
+            modal.style.display = 'block';
+            list.innerHTML = '<p style="text-align: center; color: #666;">Loading...</p>';
+            
+            try {
+                const response = await fetch(`${SERVICES.notification}/notifications/user/${currentUser.id}`, {
+                    headers: { 'Authorization': `Bearer ${currentToken}` }
+                });
+                
+                if (response.ok) {
+                    const data = await response.json();
+                    if (data.notifications && data.notifications.length > 0) {
+                        list.innerHTML = data.notifications.map(n => `
+                            <div style="border-bottom: 1px solid #ddd; padding: 15px; background: ${n.read ? 'white' : '#f0f8ff'};">
+                                <div style="display: flex; justify-content: space-between; align-items: start;">
+                                    <div style="flex: 1;">
+                                        <strong>${n.subject}</strong>
+                                        <p style="margin: 5px 0; color: #666;">${n.message}</p>
+                                        <small style="color: #999;">${new Date(n.created_at).toLocaleString()}</small>
+                                    </div>
+                                    ${!n.read ? `<button onclick="markNotificationRead('${n.id}')" style="padding: 5px 10px; font-size: 12px;">Mark Read</button>` : ''}
+                                </div>
+                            </div>
+                        `).join('');
+                    } else {
+                        list.innerHTML = '<p style="text-align: center; color: #666; padding: 20px;">No notifications yet</p>';
+                    }
+                }
+            } catch (error) {
+                list.innerHTML = '<p style="text-align: center; color: #ff6b6b;">Error loading notifications</p>';
+            }
+        }
+
+        function closeNotifications() {
+            document.getElementById('notificationsModal').style.display = 'none';
+        }
+
+        async function markNotificationRead(id) {
+            try {
+                await fetch(`${SERVICES.notification}/notifications/${id}/mark-read`, {
+                    method: 'POST',
+                    headers: { 'Authorization': `Bearer ${currentToken}` }
+                });
+                openNotifications();
+                loadNotificationCount();
+            } catch (error) {
+                console.log('Error marking notification as read:', error);
+            }
+        }
+
+        async function markAllNotificationsRead() {
+            try {
+                const response = await fetch(`${SERVICES.notification}/notifications/user/${currentUser.id}`, {
+                    headers: { 'Authorization': `Bearer ${currentToken}` }
+                });
+                
+                if (response.ok) {
+                    const data = await response.json();
+                    for (const notification of data.notifications) {
+                        if (!notification.read) {
+                            await markNotificationRead(notification.id);
+                        }
+                    }
+                    openNotifications();
+                    loadNotificationCount();
+                }
+            } catch (error) {
+                console.log('Error marking all as read:', error);
+            }
+        }
+
+        async function sendNotification(subject, message, channel = 'general') {
+            if (!currentUser) return;
+            
+            try {
+                await fetch(`${SERVICES.notification}/notifications/send`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${currentToken}`
+                    },
+                    body: JSON.stringify({
+                        user_id: currentUser.id,
+                        user_email: currentUser.email,
+                        notification_type: 'email',
+                        channel: channel,
+                        subject: subject,
+                        message: message
+                    })
+                });
+                
+                // Refresh notification count
+                setTimeout(loadNotificationCount, 1000);
+            } catch (error) {
+                console.log('Could not send notification:', error);
+            }
+        }
+
+        // ============= FILE UPLOAD (NEW FEATURE!) =============
+        let selectedFiles = [];
+
+        function handleFileSelect(event) {
+            const files = Array.from(event.target.files);
+            selectedFiles = [...selectedFiles, ...files];
+            displayFilePreview();
+        }
+
+        function displayFilePreview() {
+            const preview = document.getElementById('filePreview');
+            preview.innerHTML = selectedFiles.map((file, index) => {
+                const url = URL.createObjectURL(file);
+                return `
+                    <div class="file-preview-item">
+                        <img src="${url}" alt="${file.name}">
+                        <button class="remove-file" onclick="removeFile(${index})">×</button>
+                    </div>
+                `;
+            }).join('');
+        }
+
+        function removeFile(index) {
+            selectedFiles.splice(index, 1);
+            displayFilePreview();
+        }
+
+        async function uploadFiles(appointmentId, inspectionId) {
+            if (selectedFiles.length === 0) return [];
+            
+            const uploadedFiles = [];
+            
+            for (const file of selectedFiles) {
+                const formData = new FormData();
+                formData.append('file', file);
+                formData.append('uploaded_by', currentUser.id);
+                formData.append('appointment_id', appointmentId);
+                if (inspectionId) {
+                    formData.append('inspection_id', inspectionId);
+                }
+                formData.append('photo_type', 'inspection');
+                formData.append('description', `Inspection photo for appointment ${appointmentId}`);
+                
+                try {
+                    const response = await fetch(`${SERVICES.file}/files/upload`, {
+                        method: 'POST',
+                        headers: {
+                            'Authorization': `Bearer ${currentToken}`
+                        },
+                        body: formData
+                    });
+                    
+                    if (response.ok) {
+                        const data = await response.json();
+                        uploadedFiles.push(data);
+                    }
+                } catch (error) {
+                    console.log('Error uploading file:', error);
+                }
+            }
+            
+            // Clear selected files
+            selectedFiles = [];
+            displayFilePreview();
+            
+            return uploadedFiles;
+        }
+
+        // Setup drag and drop
+        document.addEventListener('DOMContentLoaded', () => {
+            const uploadArea = document.getElementById('uploadArea');
+            if (uploadArea) {
+                uploadArea.addEventListener('dragover', (e) => {
+                    e.preventDefault();
+                    uploadArea.classList.add('dragover');
+                });
+                
+                uploadArea.addEventListener('dragleave', () => {
+                    uploadArea.classList.remove('dragover');
+                });
+                
+                uploadArea.addEventListener('drop', (e) => {
+                    e.preventDefault();
+                    uploadArea.classList.remove('dragover');
+                    const files = Array.from(e.dataTransfer.files);
+                    selectedFiles = [...selectedFiles, ...files.filter(f => f.type.startsWith('image/'))];
+                    displayFilePreview();
+                });
+            }
+        });
 
         // ============= APPOINTMENTS =============
         async function handleBookAppointment(event) {
@@ -1085,7 +1437,16 @@
                 });
 
                 if (response.ok) {
+                    const appointment = await response.json();
                     showAlert(alert, 'Appointment booked successfully!', 'success');
+                    
+                    // Send notification (NEW FEATURE!)
+                    await sendNotification(
+                        '✅ Appointment Booked',
+                        `Your appointment for ${data.vehicle_brand} ${data.vehicle_model} (${data.vehicle_registration}) has been booked successfully!`,
+                        'appointment'
+                    );
+                    
                     event.target.reset();
                     setTimeout(loadAppointments, 1000);
                 } else {
@@ -1180,8 +1541,32 @@
                 });
 
                 if (response.ok) {
+                    const inspection = await response.json();
+                    
+                    // Upload photos if any (NEW FEATURE!)
+                    if (selectedFiles.length > 0) {
+                        showAlert(alert, 'Uploading photos...', 'info');
+                        await uploadFiles(data.appointment_id, inspection.id);
+                    }
+                    
                     showAlert(alert, 'Inspection submitted successfully!', 'success');
+                    
+                    // Send notification (NEW FEATURE!)
+                    const statusEmoji = {
+                        'passed': '✅',
+                        'failed': '❌',
+                        'in_progress': '⏳',
+                        'passed_with_minor_issues': '⚠️'
+                    };
+                    await sendNotification(
+                        `${statusEmoji[data.final_status] || '📋'} Inspection ${data.final_status === 'in_progress' ? 'In Progress' : 'Complete'}`,
+                        `Your vehicle inspection ${data.final_status === 'in_progress' ? 'is in progress' : 'has been completed'}. Status: ${data.final_status.replace(/_/g, ' ').toUpperCase()}`,
+                        'inspection'
+                    );
+                    
                     event.target.reset();
+                    selectedFiles = [];
+                    displayFilePreview();
                 } else {
                     const error = await response.json();
                     showAlert(alert, error.detail || 'Failed to submit inspection', 'error');
@@ -2036,6 +2421,14 @@
                 if (confirmResponse.ok) {
                     console.log('✓ Payment confirmed successfully!');
                     showAlert(alert, '✅ Payment successful! Appointment confirmed.', 'success');
+                    
+                    // Send notification (NEW FEATURE!)
+                    await sendNotification(
+                        '💰 Payment Confirmed',
+                        'Your payment has been processed successfully. Your appointment is now confirmed!',
+                        'payment'
+                    );
+                    
                     setTimeout(() => {
                         closePaymentModal();
                         if (currentUser.role === 'customer') {
