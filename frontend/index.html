@@ -598,6 +598,7 @@
         <div class="nav-buttons">
             <button id="navDashboard" onclick="navigateTo('dashboard')" style="display: none;">Dashboard</button>
             <button id="navAppointments" onclick="navigateTo('appointments')" style="display: none;">Appointments</button>
+            <button id="navStatus" onclick="navigateTo('status')" style="display: none;">My Results</button>
             <button id="navInspection" onclick="navigateTo('inspection')" style="display: none;">Inspections</button>
             <button id="navAdmin" onclick="navigateTo('admin')" style="display: none;">Admin</button>
             <div class="notification-bell" onclick="openNotifications()" id="notificationBell" style="display: none;">
@@ -755,6 +756,16 @@
             </div>
         </div>
 
+        <!-- Customer Status/Results Page -->
+        <div id="statusPage" class="page">
+            <div class="card">
+                <h2>📋 My Inspection Results</h2>
+                <p style="color: #666; margin-bottom: 20px;">View the status and results of your vehicle inspections</p>
+                <div id="statusAlert" class="alert"></div>
+                <div id="customerStatusList"></div>
+            </div>
+        </div>
+
         <!-- Technician Inspection -->
         <div id="inspectionPage" class="page">
             <div class="card">
@@ -858,6 +869,7 @@
                     <button id="tabLogs" onclick="showAdminTab('logs')" style="background: #667eea;">📋 Logs</button>
                     <button id="tabVehicles" onclick="showAdminTab('vehicles')" style="background: #667eea;">🚗 Vehicles</button>
                     <button id="tabAppointments" onclick="showAdminTab('appointments')" style="background: #667eea;">📅 Appointments</button>
+                    <button id="tabInspections" onclick="showAdminTab('inspections')" style="background: #667eea;">🔍 Inspections</button>
                     <button id="tabSchedule" onclick="showAdminTab('schedule')" style="background: #667eea;">📆 Schedule</button>
                 </div>
                 
@@ -926,6 +938,13 @@
                 <div id="adminAppointmentsTab" class="admin-tab" style="display: none;">
                     <h3>All Appointments</h3>
                     <div id="adminAppointmentsList"></div>
+                </div>
+                
+                <!-- Inspections Tab (NEW!) -->
+                <div id="adminInspectionsTab" class="admin-tab" style="display: none;">
+                    <h3>🔍 All Inspections</h3>
+                    <p style="color: #666; margin-bottom: 20px;">View all vehicle inspections with details and results</p>
+                    <div id="adminInspectionsList"></div>
                 </div>
                 
                 <!-- Schedule Tab -->
@@ -1053,6 +1072,8 @@
                 // Load page-specific data
                 if (page === 'appointments' && currentUser?.role === 'customer') {
                     loadAppointments();
+                } else if (page === 'status' && currentUser?.role === 'customer') {
+                    loadCustomerStatus();
                 } else if (page === 'admin' && currentUser?.role === 'admin') {
                     loadAdminDash();
                 } else if (page === 'dashboard') {
@@ -1179,6 +1200,7 @@
             // Show role-specific buttons
             document.getElementById('navDashboard').style.display = currentUser.role !== 'admin' ? 'block' : 'none';
             document.getElementById('navAppointments').style.display = currentUser.role === 'customer' ? 'block' : 'none';
+            document.getElementById('navStatus').style.display = currentUser.role === 'customer' ? 'block' : 'none';
             document.getElementById('navInspection').style.display = currentUser.role === 'technician' ? 'block' : 'none';
             document.getElementById('navAdmin').style.display = currentUser.role === 'admin' ? 'block' : 'none';
             
@@ -1237,14 +1259,14 @@
                     const data = await response.json();
                     if (data.notifications && data.notifications.length > 0) {
                         list.innerHTML = data.notifications.map(n => `
-                            <div style="border-bottom: 1px solid #ddd; padding: 15px; background: ${n.read ? 'white' : '#f0f8ff'};">
+                            <div style="border-bottom: 1px solid #ddd; padding: 15px; background: ${n.is_read ? 'white' : '#f0f8ff'};">
                                 <div style="display: flex; justify-content: space-between; align-items: start;">
                                     <div style="flex: 1;">
                                         <strong>${n.subject}</strong>
                                         <p style="margin: 5px 0; color: #666;">${n.message}</p>
-                                        <small style="color: #999;">${new Date(n.created_at).toLocaleString()}</small>
+                                        <small style="color: #999;">${new Date(n.sent_at).toLocaleString()}</small>
                                     </div>
-                                    ${!n.read ? `<button onclick="markNotificationRead('${n.id}')" style="padding: 5px 10px; font-size: 12px;">Mark Read</button>` : ''}
+                                    ${!n.is_read ? `<button onclick="markNotificationRead('${n.id}')" style="padding: 5px 10px; font-size: 12px;">Mark Read</button>` : ''}
                                 </div>
                             </div>
                         `).join('');
@@ -1283,7 +1305,7 @@
                 if (response.ok) {
                     const data = await response.json();
                     for (const notification of data.notifications) {
-                        if (!notification.read) {
+                        if (!notification.is_read) {
                             await markNotificationRead(notification.id);
                         }
                     }
@@ -1511,6 +1533,218 @@
             }
         }
 
+        // ============= CUSTOMER STATUS (NEW FEATURE!) =============
+        async function loadCustomerStatus() {
+            const list = document.getElementById('customerStatusList');
+            list.innerHTML = '<div class="loading"><div class="spinner"></div><p>Loading your inspection results...</p></div>';
+            
+            try {
+                // Fetch customer's appointments
+                const aptResponse = await fetch(
+                    `${SERVICES.appointment}/appointments/${currentUser.id}`,
+                    { headers: { 'Authorization': `Bearer ${currentToken}` } }
+                );
+                
+                if (!aptResponse.ok) {
+                    throw new Error('Failed to load appointments');
+                }
+                
+                const appointments = await aptResponse.json();
+                
+                if (appointments.length === 0) {
+                    list.innerHTML = '<p>You have no appointments yet. <a href="#" onclick="navigateTo(\'appointments\')">Book your first appointment</a></p>';
+                    return;
+                }
+                
+                // For each appointment, check if there's an inspection
+                const appointmentsWithInspections = [];
+                
+                for (const apt of appointments) {
+                    try {
+                        // Try to get inspection for this appointment
+                        const inspResponse = await fetch(
+                            `${SERVICES.inspection}/inspections/appointment/${apt.id}`,
+                            { headers: { 'Authorization': `Bearer ${currentToken}` } }
+                        );
+                        
+                        if (inspResponse.ok) {
+                            const inspection = await inspResponse.json();
+                            appointmentsWithInspections.push({
+                                appointment: apt,
+                                inspection: inspection,
+                                hasInspection: true
+                            });
+                        } else {
+                            // No inspection yet
+                            appointmentsWithInspections.push({
+                                appointment: apt,
+                                inspection: null,
+                                hasInspection: false
+                            });
+                        }
+                    } catch (err) {
+                        // Error fetching inspection, mark as no inspection
+                        appointmentsWithInspections.push({
+                            appointment: apt,
+                            inspection: null,
+                            hasInspection: false
+                        });
+                    }
+                }
+                
+                // Render the table
+                list.innerHTML = `
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Vehicle</th>
+                                <th>Registration</th>
+                                <th>Appointment Date</th>
+                                <th>Payment Status</th>
+                                <th>Inspection Status</th>
+                                <th>Result</th>
+                                <th>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            ${appointmentsWithInspections.map(item => {
+                                const apt = item.appointment;
+                                const insp = item.inspection;
+                                const hasInsp = item.hasInspection;
+                                
+                                let inspStatus = 'Not inspected yet';
+                                let inspBadge = 'pending';
+                                let resultText = '-';
+                                let resultBadge = '';
+                                let actions = '-';
+                                
+                                if (hasInsp && insp) {
+                                    // Determine status display
+                                    const statusMap = {
+                                        'not_checked': { text: 'Not Checked', badge: 'pending' },
+                                        'in_progress': { text: 'In Progress', badge: 'in_progress' },
+                                        'passed': { text: 'PASSED ✅', badge: 'passed' },
+                                        'failed': { text: 'FAILED ❌', badge: 'failed' },
+                                        'passed_with_minor_issues': { text: 'Passed with Minor Issues ⚠️', badge: 'passed_with_minor_issues' }
+                                    };
+                                    
+                                    const status = statusMap[insp.final_status] || { text: insp.final_status, badge: 'pending' };
+                                    inspStatus = 'Inspected';
+                                    inspBadge = 'confirmed';
+                                    resultText = status.text;
+                                    resultBadge = status.badge;
+                                    
+                                    // Show details and PDF download for completed inspections
+                                    if (insp.final_status !== 'in_progress' && insp.final_status !== 'not_checked') {
+                                        actions = `
+                                            <button onclick="viewInspectionDetails('${insp.id}')" style="padding: 5px 10px; font-size: 12px; margin-right: 5px;">👁️ View Details</button>
+                                            <button onclick="downloadInspectionPDF('${apt.id}')" style="padding: 5px 10px; font-size: 12px; background: #ff6b6b;">📄 Download PDF</button>
+                                        `;
+                                    } else {
+                                        actions = '<span style="color: #999;">Inspection in progress</span>';
+                                    }
+                                }
+                                
+                                return `
+                                    <tr>
+                                        <td><strong>${apt.vehicle_info.brand} ${apt.vehicle_info.model}</strong> (${apt.vehicle_info.type})</td>
+                                        <td><strong>${apt.vehicle_info.registration}</strong></td>
+                                        <td>${apt.appointment_date ? new Date(apt.appointment_date).toLocaleString() : new Date(apt.created_at).toLocaleDateString()}</td>
+                                        <td><span class="badge ${apt.status}">${apt.status === 'confirmed' ? 'Paid' : 'Pending'}</span></td>
+                                        <td><span class="badge ${inspBadge}">${inspStatus}</span></td>
+                                        <td><span class="badge ${resultBadge}">${resultText}</span></td>
+                                        <td>${actions}</td>
+                                    </tr>
+                                `;
+                            }).join('')}
+                        </tbody>
+                    </table>
+                    
+                    <div style="margin-top: 20px; padding: 15px; background: #f8f9fa; border-radius: 5px;">
+                        <p style="margin: 0;"><strong>Legend:</strong></p>
+                        <p style="margin: 5px 0 0 0; font-size: 14px; color: #666;">
+                            • <strong>Not inspected yet:</strong> Your vehicle has not been inspected yet<br>
+                            • <strong>In Progress:</strong> Technician is currently inspecting your vehicle<br>
+                            • <strong>PASSED:</strong> Your vehicle passed the inspection ✅<br>
+                            • <strong>FAILED:</strong> Your vehicle failed the inspection ❌<br>
+                            • <strong>Passed with Minor Issues:</strong> Your vehicle passed but has minor issues ⚠️
+                        </p>
+                    </div>
+                `;
+                
+            } catch (error) {
+                console.error('Error loading customer status:', error);
+                list.innerHTML = `<p style="color: red;">Error loading inspection results: ${error.message}</p>`;
+            }
+        }
+
+        async function viewInspectionDetails(inspectionId) {
+            try {
+                const response = await fetch(
+                    `${SERVICES.inspection}/inspections/${inspectionId}`,
+                    { headers: { 'Authorization': `Bearer ${currentToken}` } }
+                );
+                
+                if (!response.ok) {
+                    throw new Error('Failed to load inspection details');
+                }
+                
+                const inspection = await response.json();
+                
+                // Show in a modal or alert
+                const results = inspection.results || {};
+                const notes = inspection.notes || 'No notes';
+                
+                const detailsHTML = `
+                    <h3>Inspection Details</h3>
+                    <p><strong>Final Status:</strong> ${inspection.final_status.replace(/_/g, ' ').toUpperCase()}</p>
+                    <h4>Item Results:</h4>
+                    <ul>
+                        ${Object.entries(results).map(([key, value]) => 
+                            `<li><strong>${key}:</strong> ${value}</li>`
+                        ).join('')}
+                    </ul>
+                    <h4>Notes:</h4>
+                    <p>${notes}</p>
+                    <p><small>Inspected at: ${new Date(inspection.created_at).toLocaleString()}</small></p>
+                `;
+                
+                // For now, use alert. Later we can create a proper modal
+                alert(detailsHTML.replace(/<[^>]*>/g, '\n').replace(/\n\n+/g, '\n'));
+                
+            } catch (error) {
+                alert('Error loading inspection details: ' + error.message);
+            }
+        }
+
+        async function downloadInspectionPDF(appointmentId) {
+            try {
+                const response = await fetch(
+                    `${SERVICES.inspection}/inspections/certificate/${appointmentId}`,
+                    { headers: { 'Authorization': `Bearer ${currentToken}` } }
+                );
+                
+                if (!response.ok) {
+                    throw new Error('Failed to generate PDF');
+                }
+                
+                // Download the PDF
+                const blob = await response.blob();
+                const url = window.URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = `inspection_certificate_${appointmentId}.pdf`;
+                document.body.appendChild(a);
+                a.click();
+                window.URL.revokeObjectURL(url);
+                document.body.removeChild(a);
+                
+                showAlert(document.getElementById('statusAlert'), 'PDF downloaded successfully!', 'success');
+            } catch (error) {
+                showAlert(document.getElementById('statusAlert'), 'Error downloading PDF: ' + error.message, 'error');
+            }
+        }
+
         // ============= INSPECTION =============
         async function handleSubmitInspection(event) {
             event.preventDefault();
@@ -1603,6 +1837,8 @@
                 loadAdminVehicles();
             } else if (tab === 'appointments') {
                 loadAdminAppointments();
+            } else if (tab === 'inspections') {
+                loadAdminInspections();
             } else if (tab === 'schedule') {
                 loadAdminSchedule();
             }
@@ -1938,19 +2174,137 @@
             }
         }
         
+        async function loadAdminInspections() {
+            const container = document.getElementById('adminInspectionsList');
+            container.innerHTML = '<div class="loading"><div class="spinner"></div></div>';
+            
+            try {
+                // Fetch all inspections
+                const response = await fetch(`${SERVICES.inspection}/inspections/all`, {
+                    headers: { 'Authorization': `Bearer ${currentToken}` }
+                });
+                
+                if (!response.ok) {
+                    throw new Error('Failed to load inspections');
+                }
+                
+                const inspections = await response.json();
+                
+                if (inspections.length === 0) {
+                    container.innerHTML = '<p>No inspections found yet.</p>';
+                    return;
+                }
+                
+                // Render table
+                container.innerHTML = `
+                    <p style="margin-bottom: 15px;"><strong>Total Inspections:</strong> ${inspections.length}</p>
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Inspection ID</th>
+                                <th>Appointment ID</th>
+                                <th>Final Status</th>
+                                <th>Results</th>
+                                <th>Notes</th>
+                                <th>Inspected At</th>
+                                <th>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            ${inspections.map(insp => {
+                                const statusMap = {
+                                    'not_checked': { text: 'Not Checked', badge: 'pending' },
+                                    'in_progress': { text: 'In Progress', badge: 'in_progress' },
+                                    'passed': { text: 'PASSED ✅', badge: 'passed' },
+                                    'failed': { text: 'FAILED ❌', badge: 'failed' },
+                                    'passed_with_minor_issues': { text: 'Passed with Minor Issues ⚠️', badge: 'passed_with_minor_issues' }
+                                };
+                                
+                                const status = statusMap[insp.final_status] || { text: insp.final_status, badge: 'pending' };
+                                const results = insp.results || {};
+                                const resultsText = Object.entries(results)
+                                    .map(([key, value]) => `${key}: ${value}`)
+                                    .join(', ') || '-';
+                                
+                                return `
+                                    <tr>
+                                        <td><small>${insp.id.substring(0, 8)}...</small></td>
+                                        <td><small>${insp.appointment_id.substring(0, 8)}...</small></td>
+                                        <td><span class="badge ${status.badge}">${status.text}</span></td>
+                                        <td style="max-width: 200px; overflow: hidden; text-overflow: ellipsis;">${resultsText}</td>
+                                        <td style="max-width: 150px; overflow: hidden; text-overflow: ellipsis;">${insp.notes || '-'}</td>
+                                        <td><small>${new Date(insp.created_at).toLocaleString()}</small></td>
+                                        <td>
+                                            <button onclick="viewAdminInspectionDetails('${insp.id}')" style="padding: 5px 10px; font-size: 12px; margin-right: 5px;">👁️ View</button>
+                                            ${(insp.final_status !== 'in_progress' && insp.final_status !== 'not_checked') ? 
+                                                `<button onclick="downloadInspectionPDF('${insp.appointment_id}')" style="padding: 5px 10px; font-size: 12px; background: #ff6b6b;">📄 PDF</button>` : 
+                                                ''
+                                            }
+                                        </td>
+                                    </tr>
+                                `;
+                            }).join('')}
+                        </tbody>
+                    </table>
+                `;
+            } catch (error) {
+                console.error('Error loading inspections:', error);
+                container.innerHTML = `<p style="color: red;">Error loading inspections: ${error.message}</p>`;
+            }
+        }
+        
+        async function viewAdminInspectionDetails(inspectionId) {
+            try {
+                const response = await fetch(
+                    `${SERVICES.inspection}/inspections/${inspectionId}`,
+                    { headers: { 'Authorization': `Bearer ${currentToken}` } }
+                );
+                
+                if (!response.ok) {
+                    throw new Error('Failed to load inspection details');
+                }
+                
+                const inspection = await response.json();
+                const results = inspection.results || {};
+                const notes = inspection.notes || 'No notes';
+                
+                const detailsText = `
+INSPECTION DETAILS
+==================
+
+Inspection ID: ${inspection.id}
+Appointment ID: ${inspection.appointment_id}
+Final Status: ${inspection.final_status.replace(/_/g, ' ').toUpperCase()}
+
+ITEM RESULTS:
+${Object.entries(results).map(([key, value]) => `  • ${key}: ${value}`).join('\n')}
+
+NOTES:
+${notes}
+
+Inspected at: ${new Date(inspection.created_at).toLocaleString()}
+                `;
+                
+                alert(detailsText);
+                
+            } catch (error) {
+                alert('Error loading inspection details: ' + error.message);
+            }
+        }
+        
         async function loadAdminSchedule() {
             const container = document.getElementById('adminScheduleView');
             const today = new Date();
             const dayOfWeek = today.getDay() || 7;
-            const monday = new Date(today);
-            monday.setDate(today.getDate() - dayOfWeek + 1);
-            const startDate = monday.toISOString().split('T')[0];
+            const startDate = new Date(today);
+            startDate.setDate(today.getDate() - (dayOfWeek - 1));
+            const startDateStr = startDate.toISOString().split('T')[0];
             
             container.innerHTML = '<div class="loading"><div class="spinner"></div><p>Loading schedule...</p></div>';
             
             try {
                 const response = await fetch(
-                    `${SERVICES.appointment}/appointments/weekly-schedule?start_date=${startDate}`,
+                    `${SERVICES.appointment}/appointments/weekly-schedule?start_date=${startDateStr}`,
                     { headers: { 'Authorization': `Bearer ${currentToken}` }}
                 );
                 
