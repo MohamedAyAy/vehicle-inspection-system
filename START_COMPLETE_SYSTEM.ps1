@@ -33,12 +33,22 @@ Start-Process powershell -ArgumentList "-NoExit", "-Command", "cd '$baseDir\back
 Start-Sleep -Seconds 2
 
 # Start Logging Service (Port 8005)
-Write-Host "[5/6] Starting Logging Service (Port 8005)..." -ForegroundColor Green
+Write-Host "[5/8] Starting Logging Service (Port 8005)..." -ForegroundColor Green
 Start-Process powershell -ArgumentList "-NoExit", "-Command", "cd '$baseDir\backend\logging-service'; Write-Host 'Logging Service Starting...' -ForegroundColor Cyan; python main.py" -WindowStyle Normal
 Start-Sleep -Seconds 2
 
+# Start Notification Service (Port 8006)
+Write-Host "[6/8] Starting Notification Service (Port 8006)..." -ForegroundColor Green
+Start-Process powershell -ArgumentList "-NoExit", "-Command", "cd '$baseDir\backend\notification-service'; Write-Host 'Notification Service Starting...' -ForegroundColor Cyan; python main.py" -WindowStyle Normal
+Start-Sleep -Seconds 2
+
+# Start File Service (Port 8007)
+Write-Host "[7/8] Starting File Service (Port 8007)..." -ForegroundColor Green
+Start-Process powershell -ArgumentList "-NoExit", "-Command", "cd '$baseDir\backend\file-service'; Write-Host 'File Service Starting...' -ForegroundColor Cyan; python main.py" -WindowStyle Normal
+Start-Sleep -Seconds 2
+
 # Start Frontend (Port 3000)
-Write-Host "[6/6] Starting Frontend (Port 3000)..." -ForegroundColor Green
+Write-Host "[8/8] Starting Frontend (Port 3000)..." -ForegroundColor Green
 Start-Process powershell -ArgumentList "-NoExit", "-Command", "cd '$baseDir\frontend'; Write-Host 'Frontend Starting...' -ForegroundColor Cyan; python -m http.server 3000" -WindowStyle Normal
 
 Write-Host ""
@@ -49,12 +59,14 @@ Write-Host ""
 Write-Host "Please wait ~10 seconds for all services to initialize..." -ForegroundColor Yellow
 Write-Host ""
 Write-Host "Service URLs:" -ForegroundColor Cyan
-Write-Host "  - Auth Service:        http://localhost:8001" -ForegroundColor White
-Write-Host "  - Appointment Service: http://localhost:8002" -ForegroundColor White
-Write-Host "  - Payment Service:     http://localhost:8003" -ForegroundColor White
-Write-Host "  - Inspection Service:  http://localhost:8004" -ForegroundColor White
-Write-Host "  - Logging Service:     http://localhost:8005" -ForegroundColor White
-Write-Host "  - Frontend:            http://localhost:3000" -ForegroundColor White
+Write-Host "  - Auth Service:         http://localhost:8001" -ForegroundColor White
+Write-Host "  - Appointment Service:  http://localhost:8002" -ForegroundColor White
+Write-Host "  - Payment Service:      http://localhost:8003" -ForegroundColor White
+Write-Host "  - Inspection Service:   http://localhost:8004" -ForegroundColor White
+Write-Host "  - Logging Service:      http://localhost:8005" -ForegroundColor White
+Write-Host "  - Notification Service: http://localhost:8006" -ForegroundColor White
+Write-Host "  - File Service:         http://localhost:8007" -ForegroundColor White
+Write-Host "  - Frontend:             http://localhost:3000" -ForegroundColor White
 Write-Host ""
 Write-Host "Opening browser in 5 seconds..." -ForegroundColor Yellow
 Start-Sleep -Seconds 5
