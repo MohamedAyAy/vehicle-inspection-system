@@ -3,6 +3,8 @@ CREATE DATABASE appointments_db;
 CREATE DATABASE payments_db;
 CREATE DATABASE inspections_db;
 CREATE DATABASE logs_db;
+CREATE DATABASE notifications_db;
+CREATE DATABASE files_db;
 
 \connect auth_db;
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
@@ -17,4 +19,10 @@ CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 
 \connect logs_db;
+CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
+
+\connect notifications_db;
+CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
+
+\connect files_db;
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
