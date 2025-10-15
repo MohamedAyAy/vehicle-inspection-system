@@ -8,7 +8,10 @@ services:
     environment:
       POSTGRES_USER: ${DB_USER:-admin}
       POSTGRES_PASSWORD: ${DB_PASSWORD:-secure_password_change_this}
-      POSTGRES_INITDB_ARGS: "-c shared_buffers=256MB -c max_connections=200"
+    command: >
+      postgres
+      -c shared_buffers=256MB
+      -c max_connections=200
     volumes:
       - postgres_data:/var/lib/postgresql/data
       - ./init-databases.sql:/docker-entrypoint-initdb.d/init.sql
