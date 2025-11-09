@@ -21,7 +21,7 @@ INSERT INTO accounts (
 ) VALUES (
     'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'::uuid,
     'admin@test.com',
-    '$2b$12$LQv3c1yqBWVHxkd0LHAkCOYz6TtxMQJqhN8/LewY5GyYIl.YNlvuW',
+    '$2b$12$ZgyVlYwrUwINKt/2ROWsl.W8wnA1rhPPZwIBfFEUTPsKEwVVJXq22',
     'admin',
     true,
     'System',
