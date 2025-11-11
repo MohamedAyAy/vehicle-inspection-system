@@ -13,6 +13,14 @@ if (Test-Path "docker-setup.ps1") {
     docker compose up -d
 }
 
+# Quick check: is Docker daemon available?
+Write-Host "Checking Docker daemon availability..." -ForegroundColor Yellow
+docker info > $null 2>&1
+if ($LASTEXITCODE -ne 0) {
+    Write-Host "Docker daemon is not reachable. Please start Docker Desktop (or the Docker daemon) and retry." -ForegroundColor Red
+    exit 1
+}
+
 # Wait for postgres to be healthy
 $maxAttempts = 20
 $attempt = 0
@@ -41,7 +49,9 @@ if (Test-Path "init-databases.sql") {
     Write-Host "Applying init-databases.sql inside postgres (safe to run)" -ForegroundColor Yellow
     $cid = docker compose ps -q postgres
     if ($cid) {
-        docker cp .\init-databases.sql $cid:/tmp/init-databases.sql
+        # Use an explicit string expansion to avoid PowerShell interpreting $cid:/... as an invalid variable reference
+        $target = "$($cid):/tmp/init-databases.sql"
+        docker cp .\init-databases.sql $target
         docker compose exec -T postgres psql -U postgres -f /tmp/init-databases.sql
     } else {
         Write-Host "Could not find postgres container id" -ForegroundColor Red
