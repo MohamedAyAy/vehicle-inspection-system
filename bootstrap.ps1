@@ -50,10 +50,11 @@ try {
     $existing = ""
 }
 if ($existing) {
-    Write-Host "Detected existing container(s) matching $conflictName: $existing" -ForegroundColor Yellow
+    # Use subexpression to avoid PowerShell parsing errors when a variable is adjacent to punctuation
+    Write-Host "Detected existing container(s) matching $($conflictName): $($existing)" -ForegroundColor Yellow
     Write-Host "Auto-generating a unique COMPOSE_PROJECT_NAME to avoid conflict..." -ForegroundColor Yellow
     $unique = Get-UniqueProjectName $ProjectName
-    Write-Host "Switching to project name: $unique" -ForegroundColor Cyan
+    Write-Host "Switching to project name: $($unique)" -ForegroundColor Cyan
     $env:COMPOSE_PROJECT_NAME = $unique
 }
 
