@@ -1,7 +1,24 @@
 # Bootstrap script: orchestrates docker setup, waits for Postgres, runs migrations and checks
-# Usage: .\bootstrap.ps1
+# Usage: .\bootstrap.ps1 [-ProjectName <string>]
+
+Param(
+    [string]$ProjectName = ""
+)
+
+if (-not $ProjectName) {
+    # default base project name (can be overridden by caller)
+    $ProjectName = "vehicle-inspection"
+}
+
+function Get-UniqueProjectName($base) {
+    # generate a short random suffix (alphanumeric) to avoid collisions
+    $chars = ((65..90) + (97..122) + (48..57))
+    $suffix = -join (1..4 | ForEach-Object { [char]($chars | Get-Random) })
+    return "$base-$suffix"
+}
 
 Write-Host "Bootstrap: starting docker setup and migrations" -ForegroundColor Cyan
+Write-Host "Requested COMPOSE_PROJECT_NAME (base): $ProjectName" -ForegroundColor Cyan
 
 # Normalize Dockerfile names: some copies mistakenly use 'DockerFile' (capital F).
 # Docker expects 'Dockerfile' by convention; some environments are case-sensitive.
@@ -21,9 +38,28 @@ if ($badFiles) {
     Write-Host "No non-standard Dockerfile names found." -ForegroundColor Green
 }
 
+# Before running any compose steps, set the COMPOSE_PROJECT_NAME to avoid collisions.
+$env:COMPOSE_PROJECT_NAME = $ProjectName
+
+# If a container that would conflict with "$env:COMPOSE_PROJECT_NAME-postgres" already exists,
+# switch to a generated unique project name (non-destructive).
+$conflictName = "$env:COMPOSE_PROJECT_NAME-postgres"
+try {
+    $existing = docker ps -a --filter "name=$conflictName" --format "{{.Names}}" 2>$null
+} catch {
+    $existing = ""
+}
+if ($existing) {
+    Write-Host "Detected existing container(s) matching $conflictName: $existing" -ForegroundColor Yellow
+    Write-Host "Auto-generating a unique COMPOSE_PROJECT_NAME to avoid conflict..." -ForegroundColor Yellow
+    $unique = Get-UniqueProjectName $ProjectName
+    Write-Host "Switching to project name: $unique" -ForegroundColor Cyan
+    $env:COMPOSE_PROJECT_NAME = $unique
+}
+
 # Run docker-setup.ps1 which creates .env (if not present), builds, and starts containers
 if (Test-Path "docker-setup.ps1") {
-    Write-Host "Running docker-setup.ps1" -ForegroundColor Yellow
+    Write-Host "Running docker-setup.ps1 (COMPOSE_PROJECT_NAME=$env:COMPOSE_PROJECT_NAME)" -ForegroundColor Yellow
     & .\docker-setup.ps1
 } else {
     Write-Host "docker-setup.ps1 not found, running docker compose build + up" -ForegroundColor Yellow
