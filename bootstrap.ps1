@@ -42,6 +42,25 @@ if ($badFiles) {
 # Before running any compose steps, set the COMPOSE_PROJECT_NAME to avoid collisions.
 $env:COMPOSE_PROJECT_NAME = $ProjectName
 
+# Ensure .env exists with sensible defaults for a non-technical user
+if (-not (Test-Path ".env")) {
+    Write-Host ".env not found — creating default .env with easy credentials (change later)" -ForegroundColor Yellow
+    $envContent = @()
+    $envContent += "DB_USER=admin"
+    $envContent += "DB_PASSWORD=password123"
+    $envContent += "FRONTEND_URL=http://localhost:3000"
+    $envContent += "AUTH_SERVICE_PORT=8001"
+    $envContent += "APPOINTMENT_SERVICE_PORT=8002"
+    $envContent += "PAYMENT_SERVICE_PORT=8003"
+    $envContent += "INSPECTION_SERVICE_PORT=8004"
+    $envContent += "LOGGING_SERVICE_PORT=8005"
+    $envContent += "NOTIFICATION_SERVICE_PORT=8006"
+    $envContent += "FILE_SERVICE_PORT=8007"
+    $envContent | Out-File -FilePath .env -Encoding UTF8 -Force
+    Write-Host ".env created with DB_USER=admin and DB_PASSWORD=password123" -ForegroundColor Green
+} else {
+    Write-Host ".env already exists — leaving it unchanged" -ForegroundColor Green
+}
 # If a container that would conflict with "$env:COMPOSE_PROJECT_NAME-postgres" already exists,
 # switch to a generated unique project name (non-destructive).
 $conflictName = "$env:COMPOSE_PROJECT_NAME-postgres"
@@ -83,6 +102,14 @@ if ($composeFile -ne "docker-compose.yml") {
     $ComposeArgs = ""
 }
 
+# Helper: run a command inside a service with ComposeArgs
+function Exec-InService($svc, $cmd) {
+    if ($ComposeArgs -ne "") {
+        docker compose $ComposeArgs exec -T $svc sh -c $cmd
+    } else {
+        docker compose exec -T $svc sh -c $cmd
+    }
+}
 # If docker-setup.ps1 exists and the compose file doesn't contain fixed container names,
 # prefer running the helper; otherwise run compose commands directly using the chosen file.
 if ((Test-Path "docker-setup.ps1") -and (-not $useTempCompose)) {
@@ -140,14 +167,61 @@ if (Test-Path "init-databases.sql") {
 }
 
 # Run migrations for services that include migrate_db.py (best-effort)
-$servicesToMigrate = @("payment-service","appointment-service")
+$servicesToMigrate = @("payment-service","appointment-service","auth-service","inspection-service","logging-service","notification-service","file-service")
+
+# Migration with retries and connectivity check
+$maxMigAttempts = 6
+$migDelaySeconds = 5
 foreach ($svc in $servicesToMigrate) {
-    Write-Host "Attempting migration for $svc (if migrate_db.py exists)" -ForegroundColor Yellow
-    try {
-    docker compose $ComposeArgs exec -T $svc bash -c "if [ -f migrate_db.py ]; then python migrate_db.py; else echo 'no migrate_db.py'; fi"
-    } catch {
-        Write-Host "Migration command for $svc failed or service not yet ready" -ForegroundColor Yellow
+    Write-Host "Preparing migration for $svc (if migrate_db.py exists)" -ForegroundColor Yellow
+    $attempt = 0
+    $migrated = $false
+    while ($attempt -lt $maxMigAttempts -and -not $migrated) {
+        $attempt++
+        Write-Host "[$svc] migration attempt $attempt/$maxMigAttempts" -ForegroundColor Cyan
+
+        try {
+            # connectivity test: try to open TCP to postgres from the service container
+            $checkCmd = "python -c \"import socket,sys; s=socket.socket(); s.settimeout(3);\ntry:\n s.connect(('postgres',5432)); print('OK');\nexcept Exception as e:\n print('ERR',e); sys.exit(1)\""
+            Exec-InService $svc $checkCmd > $null 2>&1
+            if ($LASTEXITCODE -ne 0) {
+                Write-Host "[$svc] cannot reach postgres yet — retrying in $migDelaySeconds s" -ForegroundColor Yellow
+                Start-Sleep -Seconds $migDelaySeconds
+                continue
+            }
+
+            # if migrate_db.py exists, run it
+            $runCmd = "if [ -f migrate_db.py ]; then python migrate_db.py; else echo 'no_migrate_script'; fi"
+            Exec-InService $svc $runCmd
+            if ($LASTEXITCODE -eq 0) {
+                Write-Host "[$svc] migration completed or not required" -ForegroundColor Green
+                $migrated = $true
+                break
+            } else {
+                Write-Host "[$svc] migration command failed (exit $LASTEXITCODE) — retrying" -ForegroundColor Yellow
+            }
+        } catch {
+            Write-Host "[$svc] migration attempt raised exception — retrying" -ForegroundColor Yellow
+        }
+        Start-Sleep -Seconds $migDelaySeconds
     }
+    if (-not $migrated) {
+        Write-Host "[$svc] migration ultimately failed after $maxMigAttempts attempts" -ForegroundColor Red
+    }
+}
+
+# After migrations, attempt to create admin account if script exists
+if (Test-Path "create-admin.sql") {
+    Write-Host "Found create-admin.sql — applying to Postgres (safe, idempotent)" -ForegroundColor Yellow
+    try {
+        # Use piping to feed SQL into psql inside postgres service
+        Get-Content create-admin.sql -Raw | docker compose $ComposeArgs exec -T postgres psql -U postgres
+        Write-Host "create-admin.sql applied (check output above)" -ForegroundColor Green
+    } catch {
+        Write-Host "Failed to apply create-admin.sql: $_" -ForegroundColor Red
+    }
+} else {
+    Write-Host "No create-admin.sql found — skipping admin creation step" -ForegroundColor Yellow
 }
 
 # Run admin check (if helper exists)
