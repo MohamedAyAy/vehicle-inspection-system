@@ -59,14 +59,32 @@ if ($existing) {
     $env:COMPOSE_PROJECT_NAME = $unique
 }
 
-# Run docker-setup.ps1 which creates .env (if not present), builds, and starts containers
-if (Test-Path "docker-setup.ps1") {
+# Decide which compose file to use. If `container_name:` appears in the compose file,
+# create a temporary copy with those lines removed so container names will be generated
+# (and prefixed by COMPOSE_PROJECT_NAME) instead of colliding with an existing fixed name.
+$composeFile = "docker-compose.yml"
+$tempCompose = "docker-compose.temp.yml"
+$useTempCompose = $false
+if (Test-Path $composeFile) {
+    $hasContainerName = Select-String -Path $composeFile -Pattern '^[\s]*container_name\s*:' -Quiet -ErrorAction SilentlyContinue
+    if ($hasContainerName) {
+        Write-Host "Detected explicit 'container_name' entries in $composeFile." -ForegroundColor Yellow
+        Write-Host "Creating temporary compose file without container_name to avoid name collisions: $tempCompose" -ForegroundColor Yellow
+        Get-Content $composeFile | Where-Object { -not ($_ -match '^[\s]*container_name\s*:') } | Set-Content $tempCompose -Force
+        $composeFile = $tempCompose
+        $useTempCompose = $true
+    }
+}
+
+# If docker-setup.ps1 exists and the compose file doesn't contain fixed container names,
+# prefer running the helper; otherwise run compose commands directly using the chosen file.
+if ((Test-Path "docker-setup.ps1") -and (-not $useTempCompose)) {
     Write-Host "Running docker-setup.ps1 (COMPOSE_PROJECT_NAME=$env:COMPOSE_PROJECT_NAME)" -ForegroundColor Yellow
     & .\docker-setup.ps1
 } else {
-    Write-Host "docker-setup.ps1 not found, running docker compose build + up" -ForegroundColor Yellow
-    docker compose build
-    docker compose up -d
+    Write-Host "Running docker compose with file: $composeFile" -ForegroundColor Yellow
+    docker compose -f $composeFile build
+    docker compose -f $composeFile up -d
 }
 
 # Quick check: is Docker daemon available?
