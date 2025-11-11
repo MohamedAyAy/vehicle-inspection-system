@@ -11,10 +11,11 @@ if (-not $ProjectName) {
 }
 
 function Get-UniqueProjectName($base) {
-    # generate a short random suffix (alphanumeric) to avoid collisions
-    $chars = ((65..90) + (97..122) + (48..57))
+    # generate a short random suffix (lowercase alphanumeric) to avoid collisions
+    # Docker Compose project names must be lowercase; enforce lowercase here.
+    $chars = ((97..122) + (48..57))
     $suffix = -join (1..4 | ForEach-Object { [char]($chars | Get-Random) })
-    return "$base-$suffix"
+    return "$($base.ToLower())-$suffix"
 }
 
 Write-Host "Bootstrap: starting docker setup and migrations" -ForegroundColor Cyan
