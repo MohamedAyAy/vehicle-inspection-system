@@ -3,6 +3,24 @@
 
 Write-Host "Bootstrap: starting docker setup and migrations" -ForegroundColor Cyan
 
+# Normalize Dockerfile names: some copies mistakenly use 'DockerFile' (capital F).
+# Docker expects 'Dockerfile' by convention; some environments are case-sensitive.
+Write-Host "Checking for non-standard Dockerfile names (DockerFile) and normalizing..." -ForegroundColor Yellow
+$badFiles = Get-ChildItem -Path . -Recurse -Filter "DockerFile" -File -ErrorAction SilentlyContinue
+if ($badFiles) {
+    foreach ($bf in $badFiles) {
+        $newPath = Join-Path $bf.DirectoryName "Dockerfile"
+        if (-not (Test-Path $newPath)) {
+            Write-Host "Renaming $($bf.FullName) -> $newPath" -ForegroundColor Cyan
+            Rename-Item -Path $bf.FullName -NewName "Dockerfile"
+        } else {
+            Write-Host "Target Dockerfile already exists at $newPath; skipping rename of $($bf.FullName)" -ForegroundColor Yellow
+        }
+    }
+} else {
+    Write-Host "No non-standard Dockerfile names found." -ForegroundColor Green
+}
+
 # Run docker-setup.ps1 which creates .env (if not present), builds, and starts containers
 if (Test-Path "docker-setup.ps1") {
     Write-Host "Running docker-setup.ps1" -ForegroundColor Yellow
