@@ -76,6 +76,13 @@ if (Test-Path $composeFile) {
     }
 }
 
+# Build the compose args string to pass the chosen file (empty when using default)
+if ($composeFile -ne "docker-compose.yml") {
+    $ComposeArgs = "-f $composeFile"
+} else {
+    $ComposeArgs = ""
+}
+
 # If docker-setup.ps1 exists and the compose file doesn't contain fixed container names,
 # prefer running the helper; otherwise run compose commands directly using the chosen file.
 if ((Test-Path "docker-setup.ps1") -and (-not $useTempCompose)) {
@@ -101,7 +108,7 @@ $attempt = 0
 Write-Host "Waiting for postgres to be ready (this may take 20-60s)" -ForegroundColor Yellow
 while ($attempt -lt $maxAttempts) {
     try {
-        $status = docker compose exec -T postgres pg_isready -U postgres 2>&1
+        $status = docker compose $ComposeArgs exec -T postgres pg_isready -U postgres 2>&1
         if ($status -match "accepting connections") {
             Write-Host "Postgres is ready" -ForegroundColor Green
             break
@@ -121,12 +128,12 @@ if ($attempt -ge $maxAttempts) {
 # Ensure init SQL has been applied (the compose mounts init-databases.sql into entrypoint). But if you need to force-run it:
 if (Test-Path "init-databases.sql") {
     Write-Host "Applying init-databases.sql inside postgres (safe to run)" -ForegroundColor Yellow
-    $cid = docker compose ps -q postgres
+    $cid = docker compose $ComposeArgs ps -q postgres
     if ($cid) {
         # Use an explicit string expansion to avoid PowerShell interpreting $cid:/... as an invalid variable reference
         $target = "$($cid):/tmp/init-databases.sql"
         docker cp .\init-databases.sql $target
-        docker compose exec -T postgres psql -U postgres -f /tmp/init-databases.sql
+        docker compose $ComposeArgs exec -T postgres psql -U postgres -f /tmp/init-databases.sql
     } else {
         Write-Host "Could not find postgres container id" -ForegroundColor Red
     }
@@ -137,7 +144,7 @@ $servicesToMigrate = @("payment-service","appointment-service")
 foreach ($svc in $servicesToMigrate) {
     Write-Host "Attempting migration for $svc (if migrate_db.py exists)" -ForegroundColor Yellow
     try {
-        docker compose exec -T $svc bash -c "if [ -f migrate_db.py ]; then python migrate_db.py; else echo 'no migrate_db.py'; fi"
+    docker compose $ComposeArgs exec -T $svc bash -c "if [ -f migrate_db.py ]; then python migrate_db.py; else echo 'no migrate_db.py'; fi"
     } catch {
         Write-Host "Migration command for $svc failed or service not yet ready" -ForegroundColor Yellow
     }
